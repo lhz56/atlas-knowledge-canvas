@@ -1,8 +1,11 @@
 import './styles.css';
+import { applyOperations, buildOfflineProposal, escapeHtml, inferCapture, normalizeWorkspace, searchWorkspace, stripHtml } from './atlas-core.js';
 
-const STORAGE_KEY = 'atlas-workspace-v2';
+const STORAGE_KEY = 'atlas-workspace-v3';
+const PREVIOUS_STORAGE_KEY = 'atlas-workspace-v2';
 const LEGACY_KEY = 'atlas-knowledge-canvas-v1';
 const CLOUD_CREDS_KEY = 'atlas-cloud-credentials-v1';
+const ONBOARDING_KEY = 'atlas-onboarding-complete-v1';
 
 const seedNodes = [
   {
@@ -69,648 +72,198 @@ const seedEdges = [
   ['gradient','insight'], ['representation','insight']
 ].map(([from,to], i) => ({ id: `edge-${i}`, from, to, agent: i === 5 || i === 6 }));
 
+const hadSavedWorkspace = Boolean(localStorage.getItem(STORAGE_KEY) || localStorage.getItem(PREVIOUS_STORAGE_KEY));
 const workspace = loadWorkspace();
-let state = workspace.canvases.find(canvas => canvas.id === workspace.activeId).state;
-let view = { x: 35, y: 18, scale: .72 };
-let selectedNode = null;
+let state = activeCanvas().state;
+let view = { x:35, y:18, scale:.72 };
+let selectedNodes = new Set();
 let connectMode = [];
 let dragState = null;
 let panState = null;
 let toastTimer;
-let activeTemplate = 'blank';
+let activeTemplate = 'guided';
+let activeIntent = 'understand';
+let editorNodeId = null;
 const undoStack = [];
 const redoStack = [];
 let cloudReady = false;
-let cloudRevision = 0;
+let cloudRevision = Number(workspace.cloudRevision || 0);
 let cloudSyncTimer;
+let localDirty = false;
 
 const els = {
-  viewport: document.querySelector('#canvasViewport'), world: document.querySelector('#world'),
-  nodes: document.querySelector('#nodes'), edges: document.querySelector('#edges'),
-  zoomLabel: document.querySelector('#zoomLabel'), title: document.querySelector('#canvasTitle'),
-  toast: document.querySelector('#toast'), palette: document.querySelector('#commandPalette'),
-  searchInput: document.querySelector('#searchInput'), results: document.querySelector('#searchResults'),
-  agentPanel: document.querySelector('#agentPanel'), sidebar: document.querySelector('#sidebar'),
-  nodeActions: document.querySelector('#nodeActions'), canvasMenu: document.querySelector('#canvasMenu'),
-  canvasList: document.querySelector('#canvasList'), saveState: document.querySelector('.save-state')
+  viewport:document.querySelector('#canvasViewport'), world:document.querySelector('#world'), nodes:document.querySelector('#nodes'), edges:document.querySelector('#edges'),
+  zoomLabel:document.querySelector('#zoomLabel'), title:document.querySelector('#canvasTitle'), toast:document.querySelector('#toast'),
+  palette:document.querySelector('#commandPalette'), searchInput:document.querySelector('#searchInput'), results:document.querySelector('#searchResults'),
+  agentPanel:document.querySelector('#agentPanel'), agentInput:document.querySelector('#agentInput'), agentScope:document.querySelector('#agentScope'),
+  proposalList:document.querySelector('#proposalList'), activityList:document.querySelector('#activityList'), activityCount:document.querySelector('#activityCount'),
+  sidebar:document.querySelector('#sidebar'), nodeActions:document.querySelector('#nodeActions'), canvasMenu:document.querySelector('#canvasMenu'),
+  canvasList:document.querySelector('#canvasList'), spaceList:document.querySelector('#spaceList'), spaceBreadcrumb:document.querySelector('#spaceBreadcrumb'),
+  saveState:document.querySelector('.save-state'), cardEditor:document.querySelector('#cardEditor'), captureModal:document.querySelector('#captureModal'), minimapNodes:document.querySelector('#minimapNodes')
 };
 
 function miniCanvas(title, color, topics) {
-  const nodes = topics.map((topic, index) => ({
-    id: `${title.toLowerCase().replace(/\W/g,'-')}-${index}`, x: 270 + (index % 2) * 430, y: 170 + Math.floor(index / 2) * 330,
-    width: index === 0 ? 350 : 310, color: index === 0 ? 'dark' : color, type: index === 0 ? 'overview' : 'concept',
-    kicker: index === 0 ? 'Overview' : 'Key idea', title: topic,
-    content: `<p>${index === 0 ? `A visual starting point for exploring ${title.toLowerCase()}.` : `Capture evidence, explanations, and open questions related to ${topic.toLowerCase()}.`}</p>`
-  }));
-  const edges = nodes.slice(1).map((node, index) => ({ id: `mini-edge-${index}`, from: nodes[0].id, to: node.id }));
-  return { title, nodes, edges, revision: 1 };
+  const nodes = topics.map((topic,index) => ({ id:`${title.toLowerCase().replace(/\W/g,'-')}-${index}`, x:270+(index%2)*430, y:170+Math.floor(index/2)*330, width:index===0?350:310, color:index===0?'dark':color, type:index===0?'overview':'concept', kicker:index===0?'Overview':'Key idea', title:topic, content:`<p>${index===0?`A visual starting point for exploring ${title.toLowerCase()}.`:`Capture evidence, explanations, and open questions related to ${topic.toLowerCase()}.`}</p>` }));
+  return { title, nodes, edges:nodes.slice(1).map((node,index)=>({id:`mini-edge-${index}`,from:nodes[0].id,to:node.id,relationship:'branches into'})), revision:1, intent:'understand', activity:[], pending:[] };
 }
 
 function defaultWorkspace() {
   let legacy = null;
-  try {
-    legacy = JSON.parse(localStorage.getItem(LEGACY_KEY));
-  } catch (_) {}
-  const neuralState = legacy?.nodes?.length ? legacy : { title: 'Neural networks', nodes: structuredClone(seedNodes), edges: structuredClone(seedEdges), revision: 1 };
-  return {
-    activeId: 'neural-networks',
-    canvases: [
-      { id:'neural-networks', color:'lavender', updatedAt:Date.now(), state:neuralState },
-      { id:'solar-system', color:'gold', updatedAt:Date.now()-3600000, state:miniCanvas('The solar system','amber',['The solar system','Inner planets','Gas giants','Beyond Neptune']) },
-      { id:'behavioral-economics', color:'blue', updatedAt:Date.now()-7200000, state:miniCanvas('Behavioral economics','blue',['How people really decide','Cognitive biases','Nudges and choice','Open questions']) },
-      { id:'history-of-typography', color:'coral', updatedAt:Date.now()-10800000, state:miniCanvas('History of typography','rose',['From manuscript to screen','Movable type','Modernism','Variable fonts']) },
-      { id:'quantum-computing', color:'mint', updatedAt:Date.now()-14400000, state:miniCanvas('Quantum computing','green',['Quantum computing','Qubits','Entanglement','Error correction']) }
-    ]
-  };
+  try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY)); } catch (_) {}
+  const neuralState = legacy?.nodes?.length ? legacy : { title:'Neural networks', nodes:structuredClone(seedNodes), edges:structuredClone(seedEdges), revision:1, intent:'understand', activity:[], pending:[] };
+  return normalizeWorkspace({ activeId:'neural-networks', activeSpaceId:'learning-lab', canvases:[
+    { id:'neural-networks', spaceId:'learning-lab', color:'lavender', updatedAt:Date.now(), state:neuralState },
+    { id:'solar-system', spaceId:'learning-lab', color:'gold', updatedAt:Date.now()-3600000, state:miniCanvas('The solar system','amber',['The solar system','Inner planets','Gas giants','Beyond Neptune']) },
+    { id:'behavioral-economics', spaceId:'ideas-essays', color:'blue', updatedAt:Date.now()-7200000, state:miniCanvas('Behavioral economics','blue',['How people really decide','Cognitive biases','Nudges and choice','Open questions']) },
+    { id:'history-of-typography', spaceId:'ideas-essays', color:'coral', updatedAt:Date.now()-10800000, state:miniCanvas('History of typography','rose',['From manuscript to screen','Movable type','Modernism','Variable fonts']) },
+    { id:'quantum-computing', spaceId:'product-research', color:'mint', updatedAt:Date.now()-14400000, state:miniCanvas('Quantum computing','green',['Quantum computing','Qubits','Entanglement','Error correction']) }
+  ] });
 }
 
 function loadWorkspace() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.canvases?.length && saved.canvases.some(c => c.id === saved.activeId)) return saved;
-  } catch (_) {}
+  for (const key of [STORAGE_KEY,PREVIOUS_STORAGE_KEY]) {
+    try { const saved=JSON.parse(localStorage.getItem(key)); if(saved?.canvases?.length) return normalizeWorkspace(saved); } catch (_) {}
+  }
   return defaultWorkspace();
 }
 
+function activeCanvas() { return workspace.canvases.find(canvas=>canvas.id===workspace.activeId) || workspace.canvases[0]; }
+function activeSpace() { return workspace.spaces.find(space=>space.id===workspace.activeSpaceId) || workspace.spaces[0]; }
+
+function persistWorkspace({sync=true,flash=true}={}) {
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(workspace));
+  if(sync)localDirty=true;
+  if (flash) flashSaved();
+  renderCanvasList(); renderSpaces(); renderActivity();
+  if (sync) scheduleCloudSync();
+}
+
 function saveState() {
-  state.title = els.title.textContent.trim() || 'Untitled canvas';
-  state.revision = (state.revision || 0) + 1;
-  const active = workspace.canvases.find(canvas => canvas.id === workspace.activeId);
-  active.state = state;
-  active.updatedAt = Date.now();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
-  flashSaved();
-  renderCanvasList();
-  scheduleCloudSync();
+  state.title=els.title.textContent.trim()||'Untitled canvas'; state.revision=(state.revision||0)+1;
+  const canvas=activeCanvas(); canvas.state=state; canvas.updatedAt=Date.now(); persistWorkspace();
 }
 
 function sanitizeContent(value) {
-  const documentFragment = new DOMParser().parseFromString(`<body>${String(value || '')}</body>`, 'text/html');
-  const allowedTags = new Set(['P','STRONG','EM','UL','OL','LI','A','H3','DIV','SPAN','BR','SVG','G','LINE','CIRCLE']);
-  const allowedAttributes = new Set(['href','target','rel','class','viewBox','viewbox','x1','x2','y1','y2','cx','cy','r','fill','stroke','opacity']);
-  [...documentFragment.body.querySelectorAll('*')].forEach(element => {
-    if (!allowedTags.has(element.tagName)) { element.replaceWith(...element.childNodes); return; }
-    [...element.attributes].forEach(attribute => { if (!allowedAttributes.has(attribute.name)) element.removeAttribute(attribute.name); });
-    if (element.tagName === 'A') {
-      const href = element.getAttribute('href') || '';
-      if (!/^https?:\/\//i.test(href)) element.removeAttribute('href');
-      element.setAttribute('target','_blank'); element.setAttribute('rel','noopener noreferrer');
-    }
-  });
-  return documentFragment.body.innerHTML;
+  const parsed=new DOMParser().parseFromString(`<body>${String(value||'')}</body>`,'text/html');
+  const tags=new Set(['P','STRONG','EM','UL','OL','LI','A','H3','DIV','SPAN','BR','SVG','G','LINE','CIRCLE']);
+  const attrs=new Set(['href','target','rel','class','viewBox','viewbox','x1','x2','y1','y2','cx','cy','r','fill','stroke','opacity']);
+  [...parsed.body.querySelectorAll('*')].forEach(element=>{ if(!tags.has(element.tagName)){element.replaceWith(...element.childNodes);return;} [...element.attributes].forEach(attr=>{if(!attrs.has(attr.name))element.removeAttribute(attr.name);}); if(element.tagName==='A'){const href=element.getAttribute('href')||'';if(!/^https?:\/\//i.test(href))element.removeAttribute('href');element.setAttribute('target','_blank');element.setAttribute('rel','noopener noreferrer');} });
+  return parsed.body.innerHTML;
 }
 
 function cloudCredentials() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(CLOUD_CREDS_KEY));
-    if (saved?.workspaceId && saved?.token) return saved;
-  } catch (_) {}
-  const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
-  const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  const credentials = { workspaceId:crypto.randomUUID(), token };
-  localStorage.setItem(CLOUD_CREDS_KEY, JSON.stringify(credentials));
-  return credentials;
+  try { const saved=JSON.parse(localStorage.getItem(CLOUD_CREDS_KEY)); if(saved?.workspaceId&&saved?.token)return saved; } catch (_) {}
+  const bytes=new Uint8Array(32);crypto.getRandomValues(bytes);const token=btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const credentials={workspaceId:crypto.randomUUID(),token};localStorage.setItem(CLOUD_CREDS_KEY,JSON.stringify(credentials));return credentials;
 }
+function cloudEndpoint(){const credentials=cloudCredentials();return `${location.origin}/api/atlas/${credentials.workspaceId}`;}
+function agentBundle(){const credentials=cloudCredentials();return JSON.stringify({service:'Atlas Canvas',protocol:'atlas-agent-v1',endpoint:cloudEndpoint(),workspace:credentials.workspaceId,token:credentials.token,mcp:`${location.origin}/mcp/${credentials.workspaceId}`,skill:`${location.origin}/agent/atlas-canvas.skill`,instructions:`${location.origin}/agent/atlas-canvas/SKILL.md`},null,2);}
+async function cloudRequest(method,body){const credentials=cloudCredentials();return fetch(cloudEndpoint(),{method,headers:{authorization:`Bearer ${credentials.token}`,'content-type':'application/json','x-atlas-agent':'Atlas web'},body:body?JSON.stringify(body):undefined});}
+function applyRemoteWorkspace(remote,{announce=true}={}){if(!remote?.canvases?.length)return;const normalized=normalizeWorkspace(remote);Object.assign(workspace,normalized);state=activeCanvas().state;cloudRevision=Number(workspace.cloudRevision||0);localDirty=false;selectedNodes.clear();localStorage.setItem(STORAGE_KEY,JSON.stringify(workspace));renderAll();if(announce)showToast('New agent changes synced');}
+async function initializeCloud(){document.querySelector('#agentBundle').value=agentBundle();try{let response=await cloudRequest('GET');if(response.status===401)response=await cloudRequest('POST',{action:'bootstrap',workspace});if(!response.ok)throw new Error();const result=await response.json();if(result.workspace)applyRemoteWorkspace(result.workspace,{announce:false});cloudReady=true;document.querySelector('#cloudStatus').textContent='Cloud workspace connected';document.querySelector('#cloudStatusDetail').textContent='Agents can make attributed changes while this browser is closed.';document.querySelector('.profile-button small').textContent='Cloud workspace connected';}catch(_){document.querySelector('#cloudStatus').textContent='Local workspace ready';document.querySelector('#cloudStatusDetail').textContent='Cloud sync becomes available on the deployed Atlas site.';document.querySelector('.profile-button small').textContent='Saved locally';}}
+function scheduleCloudSync(){if(!cloudReady)return;clearTimeout(cloudSyncTimer);cloudSyncTimer=setTimeout(syncCloud,700);}
+async function syncCloud(){try{const response=await cloudRequest('PUT',{workspace,baseRevision:cloudRevision});if(response.status===409){cloudReady=false;document.querySelector('.profile-button small').textContent='Saved locally · sync conflict';showToast('Cloud changed elsewhere. Your local work is safe; reload to reconcile.');return;}if(!response.ok)throw new Error();const result=await response.json();cloudRevision=result.cloudRevision||cloudRevision;localDirty=false;}catch(_){document.querySelector('.profile-button small').textContent='Saved locally · sync retrying';}}
+async function pollCloud(){if(!cloudReady||document.hidden||localDirty)return;try{const response=await cloudRequest('GET');if(!response.ok)return;const result=await response.json();if((result.workspace?.cloudRevision||0)>cloudRevision)applyRemoteWorkspace(result.workspace);}catch(_){}}
 
-function cloudEndpoint() {
-  const credentials = cloudCredentials();
-  return `${location.origin}/api/atlas/${credentials.workspaceId}`;
-}
+function flashSaved(){els.saveState.classList.add('saving');els.saveState.lastChild.textContent=' Saving…';clearTimeout(flashSaved.timer);flashSaved.timer=setTimeout(()=>{els.saveState.classList.remove('saving');els.saveState.lastChild.textContent=cloudReady?' Synced':' Saved locally';},350);}
+function snapshot(){return JSON.stringify({state,view});}
+function captureHistory(){undoStack.push(snapshot());if(undoStack.length>60)undoStack.shift();redoStack.length=0;updateHistoryButtons();}
+function restoreSnapshot(serialized){const restored=JSON.parse(serialized);state=restored.state;view=restored.view||view;activeCanvas().state=state;els.title.textContent=state.title;persistWorkspace();renderNodes();applyView();selectOnly();updateHistoryButtons();}
+function undo(){if(!undoStack.length)return;redoStack.push(snapshot());restoreSnapshot(undoStack.pop());showToast('Undid last change');}
+function redo(){if(!redoStack.length)return;undoStack.push(snapshot());restoreSnapshot(redoStack.pop());showToast('Redid change');}
+function updateHistoryButtons(){document.querySelector('#undoButton').disabled=!undoStack.length;document.querySelector('#redoButton').disabled=!redoStack.length;}
 
-function agentBundle() {
-  const credentials = cloudCredentials();
-  return JSON.stringify({
-    service:'Atlas Canvas', protocol:'atlas-agent-v1', endpoint:cloudEndpoint(), workspace:credentials.workspaceId,
-    token:credentials.token, mcp:`${location.origin}/mcp/${credentials.workspaceId}`, skill:`${location.origin}/agent/atlas-canvas.skill`, instructions:`${location.origin}/agent/atlas-canvas/SKILL.md`
-  }, null, 2);
-}
+function nodeMarkup(node){const actor=node.updatedBy||node.createdBy||'Atlas';const attributed=node.agent?`<span class="byline"><svg><use href="#i-spark"/></svg>${escapeHtml(actor)}</span>`:'';const source=node.sourceUrl?`<a class="source-link" href="${escapeHtml(node.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open source ↗</a>`:'';return `<div class="node-handle" aria-hidden="true"></div><div class="node-body"><div class="node-kicker"><span class="source-dot"></span>${escapeHtml(node.kicker||node.type)}${attributed}</div><h2>${escapeHtml(node.title)}</h2><div class="editable-content">${sanitizeContent(node.content)}</div>${source}</div>`;}
 
-async function cloudRequest(method, body) {
-  const credentials = cloudCredentials();
-  return fetch(cloudEndpoint(), {
-    method,
-    headers:{ 'authorization':`Bearer ${credentials.token}`, 'content-type':'application/json', 'x-atlas-agent':'Atlas web' },
-    body:body ? JSON.stringify(body) : undefined,
-  });
-}
+function renderNodes(){els.nodes.replaceChildren();state.nodes.forEach(node=>{const el=document.createElement('article');el.className=`node ${node.color||''} ${node.type||''} ${node.variant||''}`;el.dataset.id=node.id;el.tabIndex=0;el.setAttribute('aria-label',`${node.kicker||node.type}: ${node.title}. Double-click to edit.`);el.style.cssText=`left:${node.x}px;top:${node.y}px;width:${node.width||310}px`;el.innerHTML=nodeMarkup(node);el.addEventListener('pointerdown',startNodeDrag);el.addEventListener('click',event=>{event.stopPropagation();handleNodeSelection(node.id,event);});el.addEventListener('dblclick',event=>{event.stopPropagation();openCardEditor(node.id);});el.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();openCardEditor(node.id);}});els.nodes.appendChild(el);});syncSelectionUI();renderMinimap();requestAnimationFrame(renderEdges);}
 
-function applyRemoteWorkspace(remote) {
-  if (!remote?.canvases?.length) return;
-  workspace.canvases = remote.canvases;
-  workspace.activeId = remote.canvases.some(canvas => canvas.id === workspace.activeId) ? workspace.activeId : remote.activeId;
-  workspace.audit = remote.audit || [];
-  workspace.cloudRevision = remote.cloudRevision || 0;
-  cloudRevision = workspace.cloudRevision;
-  state = workspace.canvases.find(canvas => canvas.id === workspace.activeId).state;
-  localStorage.setItem(STORAGE_KEY,JSON.stringify(workspace));
-  els.title.textContent = state.title; renderCanvasList(); renderNodes(); applyView();
-}
+function renderMinimap(){els.minimapNodes.replaceChildren();state.nodes.forEach(node=>{const dot=document.createElement('b');dot.classList.toggle('selected',selectedNodes.has(node.id));dot.style.left=`${Math.min(96,Math.max(1,node.x/30))}%`;dot.style.top=`${Math.min(92,Math.max(1,node.y/19))}%`;els.minimapNodes.appendChild(dot);});}
 
-async function initializeCloud() {
-  document.querySelector('#agentBundle').value = agentBundle();
-  if (location.protocol === 'file:') return;
-  try {
-    let response = await cloudRequest('GET');
-    if (response.status === 401) response = await cloudRequest('POST', { action:'bootstrap', workspace });
-    if (!response.ok) throw new Error(`Cloud returned ${response.status}`);
-    const result = await response.json();
-    if (result.workspace) applyRemoteWorkspace(result.workspace);
-    cloudReady = true;
-    document.querySelector('#cloudStatus').textContent = 'Cloud workspace connected';
-    document.querySelector('#cloudStatusDetail').textContent = 'Agents can make attributed changes while this browser is closed.';
-    document.querySelector('.profile-button small').textContent = 'Cloud workspace connected';
-  } catch (error) {
-    document.querySelector('#cloudStatus').textContent = 'Local workspace ready';
-    document.querySelector('#cloudStatusDetail').textContent = 'Cloud sync becomes available on the deployed Atlas site.';
-  }
-}
+function renderEdges(){const parts=[];state.edges.forEach(edge=>{const fromEl=document.querySelector(`.node[data-id="${CSS.escape(edge.from)}"]`);const toEl=document.querySelector(`.node[data-id="${CSS.escape(edge.to)}"]`);if(!fromEl||!toEl)return;const from={left:fromEl.offsetLeft,top:fromEl.offsetTop,width:fromEl.offsetWidth,height:fromEl.offsetHeight};const to={left:toEl.offsetLeft,top:toEl.offsetTop,width:toEl.offsetWidth,height:toEl.offsetHeight};const fc={x:from.left+from.width/2,y:from.top+from.height/2};const tc={x:to.left+to.width/2,y:to.top+to.height/2};const dx=tc.x-fc.x,dy=tc.y-fc.y;let x1,y1,x2,y2,d;if(Math.abs(dx)>=Math.abs(dy)){const forward=dx>=0;x1=forward?from.left+from.width:from.left;y1=fc.y;x2=forward?to.left:to.left+to.width;y2=tc.y;const bend=Math.max(54,Math.abs(x2-x1)*.44);d=`M ${x1} ${y1} C ${x1+(forward?bend:-bend)} ${y1}, ${x2+(forward?-bend:bend)} ${y2}, ${x2} ${y2}`;}else{const down=dy>=0;x1=fc.x;y1=down?from.top+from.height:from.top;x2=tc.x;y2=down?to.top:to.top+to.height;const bend=Math.max(54,Math.abs(y2-y1)*.44);d=`M ${x1} ${y1} C ${x1} ${y1+(down?bend:-bend)}, ${x2} ${y2+(down?-bend:bend)}, ${x2} ${y2}`;}const relationship=edge.relationship||'related to';const width=Math.min(154,Math.max(68,relationship.length*5.7+20));const label=`<g class="edge-label" transform="translate(${(x1+x2)/2} ${(y1+y2)/2})"><rect x="-${width/2}" y="-10" width="${width}" height="19" rx="7"/><text x="0" y="3">${escapeHtml(relationship)}</text></g>`;const kind=/supports|evidence|qualifies|measured/i.test(relationship)?'evidence-edge':/constrains|fails|contradicts|risk|challenges/i.test(relationship)?'caution-edge':'concept-edge';parts.push(`<path class="edge-path ${kind} ${edge.agent?'agent-edge':''}" d="${d}"/><circle class="edge-dot" cx="${x1}" cy="${y1}" r="3"/><circle class="edge-dot" cx="${x2}" cy="${y2}" r="3"/>${label}`);});els.edges.innerHTML=parts.join('');}
 
-function scheduleCloudSync() {
-  if (!cloudReady) return;
-  clearTimeout(cloudSyncTimer);
-  cloudSyncTimer = setTimeout(syncCloud, 700);
-}
+function applyView(){els.world.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;els.zoomLabel.textContent=`${Math.round(view.scale*100)}%`;}
+function syncSelectionUI(){document.querySelectorAll('.node').forEach(element=>element.classList.toggle('selected',selectedNodes.has(element.dataset.id)));els.nodeActions.hidden=!selectedNodes.size;els.nodeActions.querySelector('.selection-label').textContent=`${selectedNodes.size} selected`;const first=state.nodes.find(node=>selectedNodes.has(node.id));els.nodeActions.querySelectorAll('[data-color]').forEach(button=>button.classList.toggle('active',selectedNodes.size===1&&button.dataset.color===(first?.color||'')));const scopeOption=els.agentScope.querySelector('option[value="selection"]');scopeOption.textContent=selectedNodes.size===1?'Selected card':`${selectedNodes.size} selected cards`;scopeOption.disabled=!selectedNodes.size;if(!selectedNodes.size&&els.agentScope.value==='selection')els.agentScope.value='canvas';document.querySelector('#agentScopeLabel').textContent=selectedNodes.size?`${selectedNodes.size} card${selectedNodes.size===1?'':'s'} selected`:'Working with this canvas';renderMinimap();}
+function selectOnly(id=null){selectedNodes.clear();if(id)selectedNodes.add(id);syncSelectionUI();}
+function handleNodeSelection(id,event={}){if(connectMode.length){completeConnection(id);return;}if(event.metaKey||event.ctrlKey||event.shiftKey){selectedNodes.has(id)?selectedNodes.delete(id):selectedNodes.add(id);}else selectOnly(id);syncSelectionUI();}
+function relationshipLabel(){const value=window.prompt('How are these ideas related?','supports');return value===null?null:(value.trim()||'related to');}
+function completeConnection(id){if(connectMode[0]==='waiting'){connectMode=[id];selectOnly(id);showToast('Now choose the second card');return;}const from=connectMode[0];if(from===id){endConnectMode();return;}const exists=state.edges.some(edge=>(edge.from===from&&edge.to===id)||(edge.from===id&&edge.to===from));if(exists){showToast('These cards are already connected');endConnectMode();return;}const relationship=relationshipLabel();if(relationship===null){endConnectMode();return;}captureHistory();state.edges.push({id:`edge-${Date.now()}`,from,to:id,relationship});saveState();renderEdges();endConnectMode();selectOnly(id);showToast('Cards connected');}
+function beginConnectMode(){if(selectedNodes.size===2){const [from,to]=selectedNodes;const relationship=relationshipLabel();if(relationship===null)return;captureHistory();state.edges.push({id:`edge-${Date.now()}`,from,to,relationship});saveState();renderEdges();showToast('Cards connected');return;}connectMode=[selectedNodes.values().next().value||'waiting'];document.body.classList.add('connecting');document.querySelector('#addConnection').classList.add('active');showToast(connectMode[0]==='waiting'?'Choose the first card':'Choose the second card');}
+function endConnectMode(){connectMode=[];document.body.classList.remove('connecting');document.querySelector('#addConnection').classList.remove('active');}
 
-async function syncCloud() {
-  if (!cloudReady) return;
-  try {
-    const response = await cloudRequest('PUT', { workspace });
-    if (!response.ok) throw new Error(`Cloud returned ${response.status}`);
-    const result = await response.json(); cloudRevision = result.cloudRevision || cloudRevision;
-  } catch (_) { document.querySelector('.profile-button small').textContent = 'Saved locally · sync retrying'; }
-}
+function startNodeDrag(event){if(event.button!==0)return;const id=event.currentTarget.dataset.id;if(!selectedNodes.has(id))selectOnly(id);const node=state.nodes.find(item=>item.id===id);captureHistory();dragState={node,startX:event.clientX,startY:event.clientY,x:node.x,y:node.y,el:event.currentTarget};dragState.el.classList.add('dragging');dragState.el.setPointerCapture(event.pointerId);event.stopPropagation();}
+window.addEventListener('pointermove',event=>{if(dragState){dragState.node.x=Math.round(dragState.x+(event.clientX-dragState.startX)/view.scale);dragState.node.y=Math.round(dragState.y+(event.clientY-dragState.startY)/view.scale);dragState.el.style.left=`${dragState.node.x}px`;dragState.el.style.top=`${dragState.node.y}px`;renderEdges();}else if(panState){view.x=panState.x+event.clientX-panState.startX;view.y=panState.y+event.clientY-panState.startY;applyView();}});
+window.addEventListener('pointerup',()=>{if(dragState){dragState.el.classList.remove('dragging');saveState();}if(panState)els.viewport.classList.remove('is-panning');dragState=null;panState=null;});
+els.viewport.addEventListener('pointerdown',event=>{if(event.target!==els.viewport&&event.target!==els.world&&event.target!==els.nodes&&!event.target.classList.contains('edges'))return;selectOnly();endConnectMode();els.canvasMenu.hidden=true;panState={startX:event.clientX,startY:event.clientY,x:view.x,y:view.y};els.viewport.classList.add('is-panning');});
+els.viewport.addEventListener('wheel',event=>{event.preventDefault();const rect=els.viewport.getBoundingClientRect();const px=event.clientX-rect.left,py=event.clientY-rect.top,old=view.scale,next=Math.min(1.35,Math.max(minimumScale(),old*(event.deltaY>0?.92:1.08)));view.x=px-((px-view.x)/old)*next;view.y=py-((py-view.y)/old)*next;view.scale=next;applyView();},{passive:false});
+function zoomBy(delta){const old=view.scale,next=Math.min(1.35,Math.max(minimumScale(),old+delta)),cx=els.viewport.clientWidth/2,cy=els.viewport.clientHeight/2;view.x=cx-((cx-view.x)/old)*next;view.y=cy-((cy-view.y)/old)*next;view.scale=next;applyView();}
+function minimumScale(){return window.innerWidth<=540?.12:window.innerWidth<900?.24:.38;}
+function fitCanvas(){if(!state.nodes.length)return;const bounds=state.nodes.reduce((box,node)=>({minX:Math.min(box.minX,node.x),minY:Math.min(box.minY,node.y),maxX:Math.max(box.maxX,node.x+(node.width||310)),maxY:Math.max(box.maxY,node.y+330)}),{minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity});const width=Math.max(350,bounds.maxX-bounds.minX),height=Math.max(300,bounds.maxY-bounds.minY),scale=Math.min(.84,(els.viewport.clientWidth-100)/width,(els.viewport.clientHeight-130)/height);view.scale=Math.max(minimumScale(),scale);view.x=(els.viewport.clientWidth-width*view.scale)/2-bounds.minX*view.scale;view.y=(els.viewport.clientHeight-height*view.scale)/2-bounds.minY*view.scale;applyView();}
 
-async function pollCloud() {
-  if (!cloudReady || document.hidden) return;
-  try {
-    const response = await cloudRequest('GET'); if (!response.ok) return;
-    const result = await response.json();
-    if ((result.workspace?.cloudRevision || 0) > cloudRevision) { applyRemoteWorkspace(result.workspace); showToast('New agent changes synced'); }
-  } catch (_) {}
-}
+function addNode(type='note',overrides={}){const centerX=(els.viewport.clientWidth/2-view.x)/view.scale,centerY=(els.viewport.clientHeight/2-view.y)/view.scale;const node={id:`node-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,x:Math.round(centerX-150),y:Math.round(centerY-100),width:310,type,color:type==='source'?'amber':'',kicker:type==='source'?'Source':type==='question'?'Open question':'Note',title:type==='source'?'Untitled source':'A new idea',content:'<p>Add the useful detail, evidence, or question here.</p>',createdAt:new Date().toISOString(),...overrides};captureHistory();state.nodes.push(node);state.activity.unshift({id:`activity-${Date.now()}`,actor:'You',at:new Date().toISOString(),action:'created',summaries:[`Added “${node.title}”`]});saveState();renderNodes();selectOnly(node.id);showToast('Card added');return node;}
+function deleteSelectedNodes(){if(!selectedNodes.size)return;captureHistory();const ids=new Set(selectedNodes);state.nodes=state.nodes.filter(node=>!ids.has(node.id));state.edges=state.edges.filter(edge=>!ids.has(edge.from)&&!ids.has(edge.to));selectedNodes.clear();saveState();renderNodes();showToast(`${ids.size} card${ids.size===1?'':'s'} removed · press ⌘Z to undo`);}
+function duplicateSelectedNodes(){if(!selectedNodes.size)return;captureHistory();const created=[];[...selectedNodes].forEach((id,index)=>{const original=state.nodes.find(node=>node.id===id);if(!original)return;const copy=structuredClone(original);copy.id=`node-${Date.now()}-${index}-${Math.random().toString(36).slice(2,5)}`;copy.x+=36;copy.y+=36;copy.title=`${original.title} copy`;copy.agent=false;created.push(copy);state.nodes.push(copy);});saveState();renderNodes();selectedNodes=new Set(created.map(node=>node.id));syncSelectionUI();showToast(`${created.length} card${created.length===1?'':'s'} duplicated`);}
 
-function flashSaved() {
-  els.saveState.classList.add('saving');
-  els.saveState.lastChild.textContent = ' Saving…';
-  clearTimeout(flashSaved.timer);
-  flashSaved.timer = setTimeout(() => {
-    els.saveState.classList.remove('saving');
-    els.saveState.lastChild.textContent = ' Saved';
-  }, 300);
-}
+function renderSpaces(){els.spaceList.replaceChildren();workspace.spaces.forEach(space=>{const count=workspace.canvases.filter(canvas=>canvas.spaceId===space.id).length;const button=document.createElement('button');button.className=`space-row ${space.id===workspace.activeSpaceId?'active':''}`;button.innerHTML=`<span class="space-icon ${escapeHtml(space.color||'lavender')}"><svg><use href="#i-folder"/></svg></span><span>${escapeHtml(space.name)}</span><span class="count">${count}</span>`;button.addEventListener('click',()=>switchSpace(space.id));els.spaceList.appendChild(button);});els.spaceBreadcrumb.textContent=activeSpace()?.name||'Workspace';}
+function renderCanvasList(){els.canvasList.replaceChildren();[...workspace.canvases].filter(canvas=>canvas.spaceId===workspace.activeSpaceId).sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,12).forEach(canvas=>{const button=document.createElement('button');button.className=`recent-row ${canvas.id===workspace.activeId?'active':''}`;button.innerHTML=`<span class="recent-dot ${escapeHtml(canvas.color||'lavender')}"></span><span>${escapeHtml(canvas.state.title)}</span>${canvas.id===workspace.activeId?'<svg><use href="#i-more"/></svg>':''}`;button.addEventListener('click',()=>switchCanvas(canvas.id));els.canvasList.appendChild(button);});}
+function switchSpace(id){workspace.activeSpaceId=id;const current=activeCanvas();const first=workspace.canvases.filter(canvas=>canvas.spaceId===id).sort((a,b)=>b.updatedAt-a.updatedAt)[0];if(current?.spaceId!==id&&first){workspace.activeId=first.id;state=first.state;els.title.textContent=state.title;selectedNodes.clear();renderNodes();setTimeout(fitCanvas,30);}persistWorkspace({sync:false,flash:false});}
+function switchCanvas(id){if(id===workspace.activeId)return;const next=workspace.canvases.find(canvas=>canvas.id===id);if(!next)return;workspace.activeId=id;workspace.activeSpaceId=next.spaceId;state=next.state;undoStack.length=0;redoStack.length=0;selectedNodes.clear();connectMode=[];els.title.textContent=state.title;persistWorkspace({sync:false,flash:false});renderAll();setTimeout(fitCanvas,30);if(window.innerWidth<=850)els.sidebar.classList.remove('open');showToast(`Opened ${state.title}`);}
 
-function snapshot() {
-  return JSON.stringify({ state, view });
-}
+function starterNodes(template,title,intent='understand'){const now=Date.now();if(template==='blank')return[{id:`start-${now}`,x:420,y:240,width:370,color:'dark',type:'overview',kicker:'Start here',title,content:'<p>Double-click this card to shape the thought, or use Add anything to capture a source, question, or note.</p>'}];if(template==='literature')return[{id:`question-${now}`,x:300,y:210,width:370,color:'dark',type:'question',kicker:'Guiding question',title,content:'<p>What would a useful, evidence-backed answer include?</p>'},{id:`source-${now}`,x:800,y:140,width:340,color:'amber',type:'source',kicker:'First source',title:'Add a primary source',content:'<p>Paste a URL with Add anything, then record the claim, method, and evidence.</p>'},{id:`synthesis-${now}`,x:800,y:460,width:340,color:'green',type:'insight',kicker:'Synthesis',title:'What the sources suggest',content:'<p>Track agreements, contradictions, and missing evidence.</p>'}];const intentPrompts={understand:['What I think I know','What I need to learn'],compare:['Option or perspective A','Option or perspective B'],develop:['The promising core','What could make it stronger'],decide:['What matters most','What could change the decision'],plan:['Desired outcome','The next useful action']};const labels=intentPrompts[intent]||intentPrompts.understand;return[{id:`topic-${now}`,x:300,y:230,width:380,color:'dark',type:'overview',kicker:`${intent} canvas`,title,content:'<p>Define what a useful outcome would look like. Atlas can propose questions and connections, but you stay in control.</p>'},{id:`left-${now}`,x:800,y:130,width:330,color:'blue',type:'concept',kicker:'Starting point',title:labels[0],content:'<p>Capture the strongest current belief, option, or constraint.</p>'},{id:`right-${now}`,x:800,y:460,width:330,color:'rose',type:'question',kicker:'Open loop',title:labels[1],content:'<p>Name the uncertainty that would most change your understanding.</p>'}];}
+function createCanvas(title,template='guided',intent='understand'){const id=`${title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'untitled'}-${Date.now().toString(36)}`,nodes=starterNodes(template,title,intent),edges=nodes.slice(1).map((node,index)=>({id:`starter-edge-${Date.now()}-${index}`,from:nodes[0].id,to:node.id,relationship:index===0?'starts with':'opens into'}));const canvas={id,spaceId:workspace.activeSpaceId||workspace.spaces[0].id,color:['lavender','blue','mint','coral','gold'][workspace.canvases.length%5],updatedAt:Date.now(),state:{title,nodes,edges,revision:1,intent,activity:[],pending:[]}};workspace.canvases.push(canvas);workspace.activeId=id;state=canvas.state;els.title.textContent=title;undoStack.length=0;redoStack.length=0;persistWorkspace();renderAll();setTimeout(fitCanvas,30);showToast('New canvas created');return canvas;}
+function duplicateCanvas(){const source=activeCanvas(),copy=structuredClone(source);copy.id=`${source.id}-copy-${Date.now().toString(36)}`;copy.state.title=`${source.state.title} — copy`;copy.updatedAt=Date.now();workspace.canvases.push(copy);workspace.activeId=copy.id;state=copy.state;els.title.textContent=state.title;persistWorkspace();renderAll();setTimeout(fitCanvas,30);closeCanvasMenu();showToast('Canvas duplicated');}
+function addSpace(){const name=window.prompt('Name this space');if(!name?.trim())return;const id=`${name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}-${Date.now().toString(36)}`;workspace.spaces.push({id,name:name.trim(),color:['lavender','peach','mint'][workspace.spaces.length%3]});workspace.activeSpaceId=id;persistWorkspace();showToast('Space created');}
+function autoLayout(){if(!state.nodes.length)return;captureHistory();const columns=Math.max(2,Math.ceil(Math.sqrt(state.nodes.length*1.45))),incoming=new Map(state.nodes.map(node=>[node.id,0]));state.edges.forEach(edge=>incoming.set(edge.to,(incoming.get(edge.to)||0)+1));[...state.nodes].sort((a,b)=>(incoming.get(a.id)||0)-(incoming.get(b.id)||0)).forEach((node,index)=>{node.x=240+(index%columns)*430;node.y=140+Math.floor(index/columns)*350;});saveState();renderNodes();setTimeout(fitCanvas,40);closeCanvasMenu();showToast('Canvas auto-arranged');}
 
-function captureHistory() {
-  undoStack.push(snapshot());
-  if (undoStack.length > 60) undoStack.shift();
-  redoStack.length = 0;
-  updateHistoryButtons();
-}
+function exportCanvas(){const payload=JSON.stringify({format:'atlas-canvas',version:3,exportedAt:new Date().toISOString(),canvas:state},null,2),blob=new Blob([payload],{type:'application/json'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download=`${state.title.toLowerCase().replace(/[^a-z0-9]+/g,'-')||'atlas-canvas'}.atlas.json`;anchor.click();URL.revokeObjectURL(url);closeCanvasMenu();showToast('Canvas exported');}
+async function importCanvasFile(file){try{const parsed=JSON.parse(await file.text()),imported=parsed.canvas||parsed;if(!Array.isArray(imported.nodes)||!Array.isArray(imported.edges))throw new Error('Invalid Atlas canvas');const title=`${imported.title||'Imported canvas'}`,id=`import-${Date.now().toString(36)}`,canvas={id,spaceId:workspace.activeSpaceId,color:'blue',updatedAt:Date.now(),state:{...imported,title,activity:Array.isArray(imported.activity)?imported.activity:[],pending:[]}};workspace.canvases.push(canvas);workspace.activeId=id;state=canvas.state;els.title.textContent=title;persistWorkspace();renderAll();setTimeout(fitCanvas,30);showToast('Canvas imported');}catch(error){showToast(error.message||'Could not import this file');}}
 
-function restoreSnapshot(serialized) {
-  const restored = JSON.parse(serialized);
-  state = restored.state;
-  view = restored.view || view;
-  els.title.textContent = state.title;
-  saveState(); renderNodes(); applyView(); selectNode(null); updateHistoryButtons();
-}
+function openCapture(){els.captureModal.hidden=false;document.querySelector('#captureInput').value='';document.querySelector('#captureTitle').value='';document.querySelector('#captureType').value='auto';requestAnimationFrame(()=>document.querySelector('#captureInput').focus());}
+function closeCapture(){els.captureModal.hidden=true;}
+function submitCapture(event){event.preventDefault();const raw=document.querySelector('#captureInput').value,type=document.querySelector('#captureType').value,title=document.querySelector('#captureTitle').value;const inferred=inferCapture(raw,type,title);const node=addNode(inferred.type,inferred);closeCapture();openCardEditor(node.id);}
 
-function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(snapshot());
-  restoreSnapshot(undoStack.pop());
-  showToast('Undid last change');
-}
+function openCardEditor(id){const node=state.nodes.find(item=>item.id===id);if(!node)return;editorNodeId=id;selectOnly(id);document.querySelector('#editorType').value=['note','concept','question','source','insight','overview'].includes(node.type)?node.type:'note';document.querySelector('#editorKicker').value=node.kicker||'';document.querySelector('#editorTitle').value=node.title||'';document.querySelector('#editorBody').innerHTML=sanitizeContent(node.content);document.querySelector('#editorUrl').value=node.sourceUrl||'';document.querySelector('#editorUrlRow').hidden=node.type!=='source';document.querySelector('#editorMeta').textContent=node.agent?`Last changed by ${node.updatedBy||node.createdBy||'an agent'}. All accepted changes remain undoable.`:'Created by you. Changes save when you press Save card.';els.cardEditor.hidden=false;requestAnimationFrame(()=>document.querySelector('#editorTitle').focus());}
+function closeCardEditor(){els.cardEditor.hidden=true;editorNodeId=null;}
+function saveCardEditor(event){event.preventDefault();const node=state.nodes.find(item=>item.id===editorNodeId);if(!node)return;captureHistory();node.type=document.querySelector('#editorType').value;node.kicker=document.querySelector('#editorKicker').value.trim()||node.type;node.title=document.querySelector('#editorTitle').value.trim()||'Untitled card';node.content=sanitizeContent(document.querySelector('#editorBody').innerHTML)||'<p></p>';node.sourceUrl=document.querySelector('#editorUrl').value.trim();node.updatedAt=new Date().toISOString();node.updatedBy='You';node.agent=false;state.activity.unshift({id:`activity-${Date.now()}`,actor:'You',at:new Date().toISOString(),action:'updated',summaries:[`Updated “${node.title}”`]});saveState();renderNodes();selectOnly(node.id);closeCardEditor();showToast('Card saved');}
 
-function redo() {
-  if (!redoStack.length) return;
-  undoStack.push(snapshot());
-  restoreSnapshot(redoStack.pop());
-  showToast('Redid change');
-}
+function renderSearchResults(query=''){const matches=searchWorkspace(workspace,query);els.results.innerHTML=`<p class="result-label">${query.trim()?`${matches.length} matches across Atlas`:'Recent knowledge across Atlas'}</p>`;matches.slice(0,12).forEach(result=>{const button=document.createElement('button');button.className='search-result';button.innerHTML=`<span class="result-swatch ${escapeHtml(result.node.color||'')}"></span><span><strong>${escapeHtml(result.node.title)}</strong><small>${escapeHtml(result.canvasTitle)} · ${escapeHtml(result.node.kicker||result.node.type)}</small></span>`;button.addEventListener('click',()=>{const focus=()=>{focusNode(result.node.id);closePalette();};result.canvasId===workspace.activeId?focus():(switchCanvas(result.canvasId),setTimeout(focus,50));});els.results.appendChild(button);});}
+function focusNode(id){const node=state.nodes.find(item=>item.id===id);if(!node)return;view.scale=Math.max(view.scale,.78);view.x=els.viewport.clientWidth/2-(node.x+(node.width||310)/2)*view.scale;view.y=els.viewport.clientHeight/2-(node.y+150)*view.scale;applyView();selectOnly(id);}
+function openPalette(){els.palette.hidden=false;renderSearchResults();requestAnimationFrame(()=>els.searchInput.focus());}
+function closePalette(){els.palette.hidden=true;els.searchInput.value='';}
 
-function updateHistoryButtons() {
-  document.querySelector('#undoButton').disabled = !undoStack.length;
-  document.querySelector('#redoButton').disabled = !redoStack.length;
-}
+function renderActivity(){const activity=state.activity||[],pending=state.pending||[];els.activityCount.textContent=String(pending.length);els.activityCount.hidden=!pending.length;els.activityList.replaceChildren();if(!activity.length){els.activityList.innerHTML='<p class="activity-empty">Accepted edits and connected-agent transactions will appear here with their source and time.</p>';return;}activity.slice(0,5).forEach(item=>{const row=document.createElement('div');row.className='agent-item';const summary=item.summaries?.join(' · ')||item.action||'Canvas changed';row.innerHTML=`<span class="activity-icon ${item.actor==='You'?'green':'purple'}"><svg><use href="#i-${item.actor==='You'?'check':'spark'}"/></svg></span><div><strong>${escapeHtml(summary)}</strong><p>${escapeHtml(item.actor||'Atlas')}</p><small>${formatRelativeTime(item.at)}</small></div>`;els.activityList.appendChild(row);});}
+function formatRelativeTime(at){const diff=Math.max(0,Date.now()-new Date(at).getTime()),minutes=Math.floor(diff/60000);return minutes<1?'just now':minutes<60?`${minutes} min ago`:minutes<1440?`${Math.floor(minutes/60)} hr ago`:new Date(at).toLocaleDateString();}
+function proposalSummary(operation){if(operation.type==='create_node')return `Add ${operation.node?.type||'card'}: “${operation.node?.title||'Untitled'}”`;if(operation.type==='connect')return `Connect two cards as “${operation.relationship||'related to'}”`;if(operation.type==='update_node')return `Update card ${operation.nodeId||''}`;return operation.type.replace(/_/g,' ');}
+function renderProposals(){const pending=state.pending||[];els.proposalList.hidden=!pending.length;els.proposalList.replaceChildren();pending.forEach(proposal=>{const card=document.createElement('section');card.className='proposal-card';card.innerHTML=`<div class="proposal-head"><div><strong>${escapeHtml(proposal.title||'Atlas proposal')}</strong><small>${proposal.operations.length} proposed change${proposal.operations.length===1?'':'s'}</small></div></div><p>${escapeHtml(proposal.rationale||'Review before applying.')}</p><p>${proposal.operations.map(proposalSummary).map(escapeHtml).join('<br>')}</p><div class="proposal-actions"><button class="reject-proposal" data-reject="${escapeHtml(proposal.id)}">Reject</button><button class="accept-proposal" data-accept="${escapeHtml(proposal.id)}">Accept changes</button></div>`;els.proposalList.appendChild(card);});els.proposalList.querySelectorAll('[data-accept]').forEach(button=>button.addEventListener('click',()=>acceptProposal(button.dataset.accept)));els.proposalList.querySelectorAll('[data-reject]').forEach(button=>button.addEventListener('click',()=>rejectProposal(button.dataset.reject)));renderActivity();}
+async function requestAtlasProposal(prompt,scope='canvas'){const selected=[...selectedNodes],canvasPayload={id:workspace.activeId,title:state.title,intent:state.intent,nodes:state.nodes.slice(0,60).map(node=>({id:node.id,type:node.type,kicker:node.kicker,title:node.title,content:stripHtml(node.content).slice(0,1200),x:node.x,y:node.y})),edges:state.edges.slice(0,100)},credentials=cloudCredentials();try{const response=await fetch('/api/atlas-assist',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${credentials.token}`,'x-atlas-workspace':credentials.workspaceId},body:JSON.stringify({prompt,scope,selectedNodeIds:selected,canvas:canvasPayload})});if(!response.ok)throw new Error();return await response.json();}catch(_){return buildOfflineProposal(prompt,state,scope==='selection'?selected[0]:null);}}
+async function submitAgentPrompt(event){event.preventDefault();const prompt=els.agentInput.value.trim();if(!prompt)return;const button=document.querySelector('#sendAgentPrompt');button.disabled=true;button.textContent='Thinking…';try{const proposal=await requestAtlasProposal(prompt,els.agentScope.value);proposal.id=`proposal-${Date.now()}-${Math.random().toString(36).slice(2,5)}`;proposal.prompt=prompt;proposal.createdAt=new Date().toISOString();proposal.actor='Atlas';proposal.operations=Array.isArray(proposal.operations)?proposal.operations:[];if(!proposal.operations.length)throw new Error('Atlas returned no usable changes');state.pending.unshift(proposal);saveState();renderProposals();els.agentInput.value='';showToast('Proposal ready for review');}catch(error){showToast(error.message||'Atlas could not create a proposal');}finally{button.disabled=false;button.innerHTML='<svg><use href="#i-spark"/></svg>Propose changes';}}
+function acceptProposal(id){const proposal=state.pending.find(item=>item.id===id);if(!proposal)return;captureHistory();try{const result=applyOperations(state,proposal.operations,proposal.actor||'Atlas');state.pending=state.pending.filter(item=>item.id!==id);saveState();renderNodes();renderProposals();if(result.createdIds[0])focusNode(result.createdIds[0]);showToast('Proposal accepted · press ⌘Z to undo');}catch(error){showToast(error.message||'Could not apply proposal');}}
+function rejectProposal(id){const proposal=state.pending.find(item=>item.id===id);if(!proposal)return;state.pending=state.pending.filter(item=>item.id!==id);state.activity.unshift({id:`activity-${Date.now()}`,actor:'You',at:new Date().toISOString(),action:'rejected',summaries:[`Rejected “${proposal.title||'Atlas proposal'}”`]});saveState();renderProposals();showToast('Proposal rejected');}
+function openAgentPanel(prefill=''){els.agentPanel.hidden=false;renderProposals();if(prefill)els.agentInput.value=prefill;requestAnimationFrame(()=>els.agentInput.focus());}
+function openIntegrations(){document.querySelector('#agentBundle').value=agentBundle();document.querySelector('#agentSetupModal').hidden=false;els.agentPanel.hidden=true;closeCanvasMenu();}
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-}
+function closeCanvasMenu(){els.canvasMenu.hidden=true;}
+function showToast(message){clearTimeout(toastTimer);els.toast.textContent=message;els.toast.classList.add('show');toastTimer=setTimeout(()=>els.toast.classList.remove('show'),2200);}
+function renderAll(){els.title.textContent=state.title;renderSpaces();renderCanvasList();renderNodes();renderProposals();renderActivity();applyView();updateHistoryButtons();}
 
-function nodeMarkup(node) {
-  const provenance = node.agent ? `<span class="byline"><svg><use href="#i-spark"/></svg> Codex</span>` : '';
-  const agentName = node.createdBy || node.updatedBy || 'Codex';
-  const attributed = node.agent ? `<span class="byline"><svg><use href="#i-spark"/></svg> ${escapeHtml(agentName)}</span>` : provenance;
-  return `<div class="node-handle"></div><div class="node-body"><div class="node-kicker"><span class="source-dot"></span>${escapeHtml(node.kicker || node.type)}${attributed}</div><h2 contenteditable="true" spellcheck="false">${escapeHtml(node.title)}</h2><div class="editable-content">${sanitizeContent(node.content)}</div></div>`;
-}
+document.querySelector('#zoomIn').addEventListener('click',()=>zoomBy(.1));document.querySelector('#zoomOut').addEventListener('click',()=>zoomBy(-.1));document.querySelector('#fitCanvas').addEventListener('click',fitCanvas);
+document.querySelector('#minimap').addEventListener('click',fitCanvas);
+document.querySelector('#addAnything').addEventListener('click',openCapture);document.querySelector('#addConnection').addEventListener('click',beginConnectMode);document.querySelector('#searchButton').addEventListener('click',openPalette);document.querySelector('#addSpaceButton').addEventListener('click',addSpace);
+els.searchInput.addEventListener('input',event=>renderSearchResults(event.target.value));els.palette.addEventListener('pointerdown',event=>{if(event.target===els.palette)closePalette();});
+document.querySelector('#agentButton').addEventListener('click',()=>{els.agentPanel.hidden=!els.agentPanel.hidden;if(!els.agentPanel.hidden)renderProposals();});document.querySelector('#closeAgentPanel').addEventListener('click',()=>els.agentPanel.hidden=true);document.querySelector('#askAgent').addEventListener('click',()=>openAgentPanel());
+document.querySelector('#agentForm').addEventListener('submit',submitAgentPrompt);document.querySelectorAll('[data-agent-prompt]').forEach(button=>button.addEventListener('click',()=>openAgentPanel(button.dataset.agentPrompt)));document.querySelector('#openIntegrations').addEventListener('click',openIntegrations);document.querySelector('#openIntegrationsMenu').addEventListener('click',openIntegrations);
+document.querySelector('#closeAgentSetup').addEventListener('click',()=>document.querySelector('#agentSetupModal').hidden=true);document.querySelector('#agentSetupModal').addEventListener('pointerdown',event=>{if(event.target.id==='agentSetupModal')event.currentTarget.hidden=true;});document.querySelector('#copyAgentBundle').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(agentBundle());showToast('Private agent bundle copied');document.querySelector('#copyAgentBundle').innerHTML='<svg><use href="#i-check"/></svg>Connection bundle copied';}catch(_){document.querySelector('#agentBundle').select();showToast('Select and copy the connection bundle');}});
+document.querySelector('#themeButton').addEventListener('click',()=>{document.body.classList.toggle('dark');localStorage.setItem('atlas-theme',document.body.classList.contains('dark')?'dark':'light');});document.querySelector('.sidebar-toggle').addEventListener('click',()=>{if(window.innerWidth<=850)els.sidebar.classList.remove('open');else els.sidebar.classList.toggle('collapsed');});document.querySelector('.mobile-sidebar').addEventListener('click',()=>els.sidebar.classList.add('open'));document.querySelector('.profile-button').addEventListener('click',()=>showToast(cloudReady?'Cloud workspace connected · agent integrations are in the canvas menu':'Everything is saved locally in this browser'));
+document.querySelector('#newCanvasButton').addEventListener('click',()=>{document.querySelector('#newCanvasModal').hidden=false;requestAnimationFrame(()=>document.querySelector('#newCanvasName').focus());});els.title.addEventListener('blur',saveState);document.querySelector('#undoButton').addEventListener('click',undo);document.querySelector('#redoButton').addEventListener('click',redo);
+document.querySelector('#duplicateNode').addEventListener('click',duplicateSelectedNodes);document.querySelector('#focusNode').addEventListener('click',()=>{const id=selectedNodes.values().next().value;if(id)focusNode(id);});document.querySelector('#deleteNode').addEventListener('click',deleteSelectedNodes);els.nodeActions.querySelectorAll('[data-color]').forEach(button=>button.addEventListener('click',()=>{if(!selectedNodes.size)return;captureHistory();state.nodes.filter(node=>selectedNodes.has(node.id)).forEach(node=>node.color=button.dataset.color);saveState();renderNodes();}));
+document.querySelector('#canvasMenuButton').addEventListener('click',event=>{event.stopPropagation();els.canvasMenu.hidden=!els.canvasMenu.hidden;});document.querySelector('#autoLayout').addEventListener('click',autoLayout);document.querySelector('#exportCanvas').addEventListener('click',exportCanvas);document.querySelector('#importCanvas').addEventListener('click',()=>document.querySelector('#importFile').click());document.querySelector('#importFile').addEventListener('change',event=>{if(event.target.files[0])importCanvasFile(event.target.files[0]);event.target.value='';});document.querySelector('#duplicateCanvas').addEventListener('click',duplicateCanvas);
+document.querySelector('#captureForm').addEventListener('submit',submitCapture);document.querySelector('#closeCapture').addEventListener('click',closeCapture);document.querySelector('#cancelCapture').addEventListener('click',closeCapture);els.captureModal.addEventListener('pointerdown',event=>{if(event.target===els.captureModal)closeCapture();});document.querySelector('#captureInput').addEventListener('input',event=>{if(document.querySelector('#captureType').value==='auto'&&/^https?:\/\/\S+$/i.test(event.target.value.trim()))document.querySelector('#captureTitle').placeholder='Atlas will use the site name';});
+document.querySelector('#cardEditorForm').addEventListener('submit',saveCardEditor);document.querySelector('#closeCardEditor').addEventListener('click',closeCardEditor);document.querySelector('#cancelCardEdit').addEventListener('click',closeCardEditor);document.querySelector('#editorType').addEventListener('change',event=>document.querySelector('#editorUrlRow').hidden=event.target.value!=='source');
+document.querySelector('#cancelNewCanvas').addEventListener('click',()=>document.querySelector('#newCanvasModal').hidden=true);document.querySelector('#newCanvasModal').addEventListener('pointerdown',event=>{if(event.target.id==='newCanvasModal')event.currentTarget.hidden=true;});document.querySelectorAll('.template-option').forEach(button=>button.addEventListener('click',()=>{activeTemplate=button.dataset.template;document.querySelectorAll('.template-option').forEach(option=>option.classList.toggle('selected',option===button));}));document.querySelectorAll('[data-new-intent]').forEach(button=>button.addEventListener('click',()=>{activeIntent=button.dataset.newIntent;document.querySelectorAll('[data-new-intent]').forEach(option=>option.classList.toggle('selected',option===button));}));document.querySelector('#newCanvasForm').addEventListener('submit',event=>{event.preventDefault();const title=document.querySelector('#newCanvasName').value.trim();if(!title)return;createCanvas(title,activeTemplate,activeIntent);event.currentTarget.reset();document.querySelector('#newCanvasModal').hidden=true;});
+document.querySelectorAll('[data-intent]').forEach(button=>button.addEventListener('click',()=>{activeIntent=button.dataset.intent;document.querySelectorAll('[data-intent]').forEach(option=>option.classList.toggle('selected',option===button));}));document.querySelector('#exploreDemo').addEventListener('click',()=>{localStorage.setItem(ONBOARDING_KEY,'true');document.querySelector('#welcomeModal').hidden=true;});document.querySelector('#welcomeForm').addEventListener('submit',async event=>{event.preventDefault();const prompt=document.querySelector('#welcomeInput').value.trim();if(!prompt)return;localStorage.setItem(ONBOARDING_KEY,'true');document.querySelector('#welcomeModal').hidden=true;createCanvas(prompt,'guided',activeIntent);openAgentPanel(`Create a thoughtful first map for: ${prompt}`);document.querySelector('#agentForm').requestSubmit();});
+document.addEventListener('keydown',event=>{const editing=event.target.closest('[contenteditable="true"],input,textarea,select');if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();openPalette();}if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='z'&&!event.shiftKey&&!editing){event.preventDefault();undo();}if((((event.metaKey||event.ctrlKey)&&event.shiftKey&&event.key.toLowerCase()==='z')||((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='y'))&&!editing){event.preventDefault();redo();}if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='d'&&selectedNodes.size&&!editing){event.preventDefault();duplicateSelectedNodes();}if(event.shiftKey&&event.key.toLowerCase()==='a'&&!editing){event.preventDefault();autoLayout();}if(event.key==='Escape'){closePalette();els.agentPanel.hidden=true;closeCanvasMenu();closeCapture();closeCardEditor();document.querySelector('#newCanvasModal').hidden=true;document.querySelector('#agentSetupModal').hidden=true;selectOnly();endConnectMode();}if((event.key==='Backspace'||event.key==='Delete')&&selectedNodes.size&&!editing)deleteSelectedNodes();});
 
-function renderNodes() {
-  els.nodes.replaceChildren();
-  state.nodes.forEach(node => {
-    const el = document.createElement('article');
-    el.className = `node ${node.color || ''} ${node.type || ''} ${node.variant || ''}`;
-    el.dataset.id = node.id;
-    el.style.cssText = `left:${node.x}px;top:${node.y}px;width:${node.width || 310}px`;
-    el.innerHTML = nodeMarkup(node);
-    el.addEventListener('pointerdown', startNodeDrag);
-    el.addEventListener('click', e => { e.stopPropagation(); handleNodeSelection(node.id); });
-    el.querySelector('h2').addEventListener('pointerdown', e => e.stopPropagation());
-    el.querySelector('h2').addEventListener('focus', () => { el.dataset.titleBefore = node.title; });
-    el.querySelector('h2').addEventListener('blur', e => {
-      const nextTitle = e.currentTarget.textContent.trim() || 'Untitled card';
-      if (nextTitle !== node.title) { undoStack.push(JSON.stringify({ state: { ...structuredClone(state), nodes: state.nodes.map(n => n.id === node.id ? {...n, title: el.dataset.titleBefore || n.title} : n) }, view })); redoStack.length = 0; node.title = nextTitle; saveState(); updateHistoryButtons(); renderSearchResults(); }
-    });
-    els.nodes.appendChild(el);
-  });
-  requestAnimationFrame(renderEdges);
-}
+window.AtlasCanvas=Object.freeze({version:'3.0',getSnapshot:()=>structuredClone(state),createNode:input=>addNode(input.type||'note',{...input,agent:true,kicker:input.kicker||'Agent contribution'}),listCanvases:()=>workspace.canvases.map(canvas=>({id:canvas.id,title:canvas.state.title,spaceId:canvas.spaceId,updatedAt:canvas.updatedAt})),openCanvas:switchCanvas,createCanvas:(title,template='guided',intent='understand')=>createCanvas(title,template,intent),propose:(prompt,scope='canvas')=>requestAtlasProposal(prompt,scope),transact:operations=>{captureHistory();applyOperations(state,operations,'Connected agent',{allowDelete:false});saveState();renderNodes();return structuredClone(state);},focus:focusNode,exportJSON:()=>JSON.stringify(state,null,2)});
 
-function renderEdges() {
-  const parts = [];
-  state.edges.forEach(edge => {
-    const fromEl = document.querySelector(`.node[data-id="${CSS.escape(edge.from)}"]`);
-    const toEl = document.querySelector(`.node[data-id="${CSS.escape(edge.to)}"]`);
-    if (!fromEl || !toEl) return;
-    const from = { left:fromEl.offsetLeft, top:fromEl.offsetTop, width:fromEl.offsetWidth, height:fromEl.offsetHeight };
-    const to = { left:toEl.offsetLeft, top:toEl.offsetTop, width:toEl.offsetWidth, height:toEl.offsetHeight };
-    const fromCenter = { x:from.left + from.width / 2, y:from.top + from.height / 2 };
-    const toCenter = { x:to.left + to.width / 2, y:to.top + to.height / 2 };
-    const dx = toCenter.x - fromCenter.x;
-    const dy = toCenter.y - fromCenter.y;
-    let x1, y1, x2, y2, d;
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      const forward = dx >= 0;
-      x1 = forward ? from.left + from.width : from.left;
-      y1 = fromCenter.y;
-      x2 = forward ? to.left : to.left + to.width;
-      y2 = toCenter.y;
-      const bend = Math.max(54, Math.abs(x2 - x1) * .44);
-      d = `M ${x1} ${y1} C ${x1 + (forward ? bend : -bend)} ${y1}, ${x2 + (forward ? -bend : bend)} ${y2}, ${x2} ${y2}`;
-    } else {
-      const downward = dy >= 0;
-      x1 = fromCenter.x;
-      y1 = downward ? from.top + from.height : from.top;
-      x2 = toCenter.x;
-      y2 = downward ? to.top : to.top + to.height;
-      const bend = Math.max(54, Math.abs(y2 - y1) * .44);
-      d = `M ${x1} ${y1} C ${x1} ${y1 + (downward ? bend : -bend)}, ${x2} ${y2 + (downward ? -bend : bend)}, ${x2} ${y2}`;
-    }
-    const labelX = (x1 + x2) / 2;
-    const labelY = (y1 + y2) / 2;
-    const relationship = edge.relationship || '';
-    const labelWidth = Math.min(154, Math.max(68, relationship.length * 5.7 + 20));
-    const label = relationship && relationship !== 'related to' ? `<g class="edge-label" transform="translate(${labelX} ${labelY})"><rect x="-${labelWidth / 2}" y="-10" width="${labelWidth}" height="19" rx="7"/><text x="0" y="3">${escapeHtml(relationship)}</text></g>` : '';
-    const kind = /supports|evidence|qualifies|measured by/i.test(relationship) ? 'evidence-edge' : /constrains|fails|contradicts|risk/i.test(relationship) ? 'caution-edge' : 'concept-edge';
-    parts.push(`<path class="edge-path ${kind} ${edge.agent ? 'agent-edge' : ''}" d="${d}"/><circle class="edge-dot" cx="${x1}" cy="${y1}" r="3"/><circle class="edge-dot" cx="${x2}" cy="${y2}" r="3"/>${label}`);
-  });
-  els.edges.innerHTML = parts.join('');
-}
-
-function applyView() {
-  els.world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-  els.zoomLabel.textContent = `${Math.round(view.scale * 100)}%`;
-}
-
-function selectNode(id) {
-  selectedNode = id;
-  document.querySelectorAll('.node').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
-  els.nodeActions.hidden = !id;
-  if (id) {
-    const node = state.nodes.find(n => n.id === id);
-    els.nodeActions.querySelectorAll('[data-color]').forEach(button => button.classList.toggle('active', button.dataset.color === (node?.color || '')));
-  }
-}
-
-function handleNodeSelection(id) {
-  if (connectMode.length) {
-    if (connectMode[0] === 'waiting') { connectMode = [id]; selectNode(id); showToast('Now choose a card to connect'); return; }
-    if (connectMode[0] === id) { connectMode = []; endConnectMode(); return; }
-    const from = connectMode[0];
-    captureHistory();
-    const exists = state.edges.some(edge => (edge.from === from && edge.to === id) || (edge.from === id && edge.to === from));
-    if (!exists) state.edges.push({ id:`edge-${Date.now()}`, from, to:id, relationship:'related to' });
-    saveState(); renderEdges(); endConnectMode(); selectNode(id);
-    showToast(exists ? 'These cards are already connected' : 'Cards connected');
-    return;
-  }
-  selectNode(id);
-}
-
-function beginConnectMode() {
-  if (!selectedNode) {
-    connectMode = ['waiting'];
-    document.body.classList.add('connecting');
-    document.querySelector('#addConnection').classList.add('active');
-    showToast('Choose the first card');
-    return;
-  }
-  connectMode = [selectedNode];
-  document.body.classList.add('connecting');
-  document.querySelector('#addConnection').classList.add('active');
-  showToast('Now choose a card to connect');
-}
-
-function endConnectMode() {
-  connectMode = [];
-  document.body.classList.remove('connecting');
-  document.querySelector('#addConnection').classList.remove('active');
-}
-
-function startNodeDrag(e) {
-  if (e.target.closest('[contenteditable="true"]')) return;
-  const id = e.currentTarget.dataset.id;
-  const node = state.nodes.find(n => n.id === id);
-  captureHistory();
-  selectNode(id);
-  dragState = { node, startX: e.clientX, startY: e.clientY, x: node.x, y: node.y, el: e.currentTarget };
-  dragState.el.classList.add('dragging');
-  dragState.el.setPointerCapture(e.pointerId);
-  e.stopPropagation();
-}
-
-window.addEventListener('pointermove', e => {
-  if (dragState) {
-    dragState.node.x = Math.round(dragState.x + (e.clientX - dragState.startX) / view.scale);
-    dragState.node.y = Math.round(dragState.y + (e.clientY - dragState.startY) / view.scale);
-    dragState.el.style.left = `${dragState.node.x}px`;
-    dragState.el.style.top = `${dragState.node.y}px`;
-    renderEdges();
-  } else if (panState) {
-    view.x = panState.x + e.clientX - panState.startX;
-    view.y = panState.y + e.clientY - panState.startY;
-    applyView();
-  }
-});
-
-window.addEventListener('pointerup', () => {
-  if (dragState) { dragState.el.classList.remove('dragging'); saveState(); }
-  if (panState) els.viewport.classList.remove('is-panning');
-  dragState = null; panState = null;
-});
-
-els.viewport.addEventListener('pointerdown', e => {
-  if (e.target !== els.viewport && e.target !== els.world && e.target !== els.nodes && !e.target.classList.contains('edges')) return;
-  selectNode(null); endConnectMode(); els.canvasMenu.hidden = true;
-  panState = { startX: e.clientX, startY: e.clientY, x: view.x, y: view.y };
-  els.viewport.classList.add('is-panning');
-});
-
-els.viewport.addEventListener('wheel', e => {
-  e.preventDefault();
-  const rect = els.viewport.getBoundingClientRect();
-  const pointerX = e.clientX - rect.left;
-  const pointerY = e.clientY - rect.top;
-  const oldScale = view.scale;
-  const next = Math.min(1.35, Math.max(minimumScale(), oldScale * (e.deltaY > 0 ? .92 : 1.08)));
-  view.x = pointerX - ((pointerX - view.x) / oldScale) * next;
-  view.y = pointerY - ((pointerY - view.y) / oldScale) * next;
-  view.scale = next;
-  applyView();
-}, { passive: false });
-
-function zoomBy(delta) {
-  const old = view.scale;
-  const next = Math.min(1.35, Math.max(minimumScale(), old + delta));
-  const cx = els.viewport.clientWidth / 2, cy = els.viewport.clientHeight / 2;
-  view.x = cx - ((cx - view.x) / old) * next;
-  view.y = cy - ((cy - view.y) / old) * next;
-  view.scale = next; applyView();
-}
-
-function minimumScale() {
-  if (window.innerWidth <= 540) return .12;
-  if (window.innerWidth < 900) return .24;
-  return .38;
-}
-
-function fitCanvas() {
-  const bounds = state.nodes.reduce((b,n) => ({ minX: Math.min(b.minX,n.x), minY: Math.min(b.minY,n.y), maxX: Math.max(b.maxX,n.x+(n.width||310)), maxY: Math.max(b.maxY,n.y+330) }), {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity});
-  const scale = Math.min(.84, (els.viewport.clientWidth - 100)/(bounds.maxX-bounds.minX), (els.viewport.clientHeight - 130)/(bounds.maxY-bounds.minY));
-  view.scale = Math.max(minimumScale(), scale);
-  view.x = (els.viewport.clientWidth - (bounds.maxX-bounds.minX)*view.scale)/2 - bounds.minX*view.scale;
-  view.y = (els.viewport.clientHeight - (bounds.maxY-bounds.minY)*view.scale)/2 - bounds.minY*view.scale;
-  applyView();
-}
-
-function addNode(type = 'note', overrides = {}) {
-  const centerX = (els.viewport.clientWidth / 2 - view.x) / view.scale;
-  const centerY = (els.viewport.clientHeight / 2 - view.y) / view.scale;
-  const node = {
-    id: `node-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, x: Math.round(centerX - 150), y: Math.round(centerY - 100), width: 310,
-    type, color: type === 'source' ? 'amber' : '', kicker: type === 'source' ? 'New source' : 'New note',
-    title: type === 'source' ? 'Untitled source' : 'A new idea',
-    content: type === 'source' ? '<p>Paste a link or describe the source here.</p><div class="source-meta"><span class="source-badge">WEB</span><span><strong>Source details</strong><small>Added just now</small></span></div>' : '<p>Double-click the title to begin shaping this thought.</p>',
-    ...overrides
-  };
-  captureHistory(); state.nodes.push(node); saveState(); renderNodes(); selectNode(node.id); showToast(`${type === 'source' ? 'Source' : 'Note'} added`); return node;
-}
-
-function deleteSelectedNode() {
-  if (!selectedNode) return;
-  captureHistory();
-  state.nodes = state.nodes.filter(node => node.id !== selectedNode);
-  state.edges = state.edges.filter(edge => edge.from !== selectedNode && edge.to !== selectedNode);
-  selectedNode = null; saveState(); renderNodes(); selectNode(null); showToast('Card removed · press ⌘Z to undo');
-}
-
-function duplicateSelectedNode() {
-  const original = state.nodes.find(node => node.id === selectedNode); if (!original) return;
-  const duplicate = structuredClone(original);
-  duplicate.id = `node-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-  duplicate.x += 36; duplicate.y += 36; duplicate.title = `${original.title} copy`; duplicate.agent = false;
-  captureHistory(); state.nodes.push(duplicate); saveState(); renderNodes(); selectNode(duplicate.id); showToast('Card duplicated');
-}
-
-function renderCanvasList() {
-  els.canvasList.replaceChildren();
-  [...workspace.canvases].sort((a,b) => b.updatedAt-a.updatedAt).slice(0,8).forEach(canvas => {
-    const button = document.createElement('button');
-    button.className = `recent-row ${canvas.id === workspace.activeId ? 'active' : ''}`;
-    button.dataset.canvasId = canvas.id;
-    button.innerHTML = `<span class="recent-dot ${escapeHtml(canvas.color || 'lavender')}"></span><span>${escapeHtml(canvas.state.title)}</span>${canvas.id === workspace.activeId ? '<svg><use href="#i-more"/></svg>' : ''}`;
-    button.addEventListener('click', () => switchCanvas(canvas.id));
-    els.canvasList.appendChild(button);
-  });
-}
-
-function switchCanvas(id) {
-  if (id === workspace.activeId) return;
-  saveState();
-  const next = workspace.canvases.find(canvas => canvas.id === id); if (!next) return;
-  workspace.activeId = id; state = next.state; undoStack.length = 0; redoStack.length = 0;
-  selectedNode = null; connectMode = []; els.title.textContent = state.title;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
-  renderCanvasList(); renderNodes(); updateHistoryButtons(); fitCanvas();
-  if (window.innerWidth <= 850) els.sidebar.classList.remove('open');
-  showToast(`Opened ${state.title}`);
-}
-
-function starterNodes(template, title) {
-  if (template === 'blank') return [{ id:`start-${Date.now()}`, x:420, y:240, width:350, color:'dark', type:'overview', kicker:'Start here', title, content:'<p>Add notes, sources, and questions. Connect ideas as your understanding grows.</p><div class="tag-row"><span class="tag">Double-click to rename</span><span class="tag">⌘K to search</span></div>' }];
-  if (template === 'literature') return [
-    { id:`question-${Date.now()}`, x:360, y:210, width:360, color:'dark', type:'question', kicker:'Research question', title, content:'<p>Write the question that will guide your reading.</p>' },
-    { id:`source-${Date.now()}`, x:840, y:150, width:330, color:'amber', type:'source', kicker:'First source', title:'Add a primary source', content:'<p>Capture the claim, method, and evidence.</p>' },
-    { id:`synthesis-${Date.now()}`, x:840, y:470, width:330, color:'green', type:'insight', kicker:'Synthesis', title:'What the sources suggest', content:'<p>Track agreements, contradictions, and missing evidence.</p>' }
-  ];
-  return [
-    { id:`topic-${Date.now()}`, x:360, y:210, width:360, color:'dark', type:'overview', kicker:'Research topic', title, content:'<p>Define the boundaries of the topic and what a useful answer would include.</p>' },
-    { id:`known-${Date.now()}`, x:840, y:120, width:320, color:'blue', type:'concept', kicker:'Current understanding', title:'What I know', content:'<p>Capture your starting assumptions.</p>' },
-    { id:`unknown-${Date.now()}`, x:840, y:430, width:320, color:'question', type:'question', kicker:'Open questions', title:'What I need to learn', content:'<p>List the questions that would change your understanding.</p>' }
-  ];
-}
-
-function createCanvas(title, template = 'blank') {
-  const id = `${title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'untitled'}-${Date.now().toString(36)}`;
-  const nodes = starterNodes(template, title);
-  const edges = nodes.slice(1).map((node,index) => ({ id:`starter-edge-${index}`, from:nodes[0].id, to:node.id }));
-  const canvas = { id, color:['lavender','blue','mint','coral','gold'][workspace.canvases.length%5], updatedAt:Date.now(), state:{ title, nodes, edges, revision:1 } };
-  workspace.canvases.push(canvas); workspace.activeId = id; state = canvas.state;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
-  els.title.textContent = title; undoStack.length = 0; redoStack.length = 0; renderCanvasList(); renderNodes(); fitCanvas(); updateHistoryButtons(); showToast('New canvas created');
-}
-
-function duplicateCanvas() {
-  const source = workspace.canvases.find(canvas => canvas.id === workspace.activeId);
-  const copy = structuredClone(source); copy.id = `${source.id}-copy-${Date.now().toString(36)}`; copy.state.title = `${source.state.title} — copy`; copy.updatedAt = Date.now();
-  workspace.canvases.push(copy); workspace.activeId = copy.id; state = copy.state; localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
-  els.title.textContent = state.title; renderCanvasList(); renderNodes(); fitCanvas(); closeCanvasMenu(); showToast('Canvas duplicated');
-}
-
-function autoLayout() {
-  if (!state.nodes.length) return;
-  captureHistory();
-  const columns = Math.max(2, Math.ceil(Math.sqrt(state.nodes.length * 1.45)));
-  const incoming = new Map(state.nodes.map(node => [node.id, 0]));
-  state.edges.forEach(edge => incoming.set(edge.to, (incoming.get(edge.to)||0)+1));
-  const ordered = [...state.nodes].sort((a,b) => (incoming.get(a.id)||0)-(incoming.get(b.id)||0));
-  ordered.forEach((node,index) => { node.x = 250 + (index % columns) * 430; node.y = 150 + Math.floor(index / columns) * 350; });
-  saveState(); renderNodes(); setTimeout(fitCanvas,40); closeCanvasMenu(); showToast('Canvas auto-arranged');
-}
-
-function exportCanvas() {
-  const payload = JSON.stringify({ format:'atlas-canvas', version:2, exportedAt:new Date().toISOString(), canvas:state }, null, 2);
-  const blob = new Blob([payload], {type:'application/json'}); const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
-  anchor.href = url; anchor.download = `${state.title.toLowerCase().replace(/[^a-z0-9]+/g,'-') || 'atlas-canvas'}.atlas.json`; anchor.click(); URL.revokeObjectURL(url); closeCanvasMenu(); showToast('Canvas exported');
-}
-
-async function importCanvasFile(file) {
-  try {
-    const parsed = JSON.parse(await file.text()); const imported = parsed.canvas || parsed;
-    if (!Array.isArray(imported.nodes) || !Array.isArray(imported.edges)) throw new Error('Invalid Atlas canvas');
-    const title = `${imported.title || 'Imported canvas'}`; const id = `import-${Date.now().toString(36)}`;
-    const canvas = { id, color:'blue', updatedAt:Date.now(), state:{...imported,title} }; workspace.canvases.push(canvas); workspace.activeId=id; state=canvas.state;
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(workspace)); els.title.textContent=title; renderCanvasList(); renderNodes(); fitCanvas(); showToast('Canvas imported');
-  } catch (error) { showToast(error.message || 'Could not import this file'); }
-}
-
-function closeCanvasMenu() { els.canvasMenu.hidden = true; }
-
-function renderSearchResults(query = '') {
-  const q = query.trim().toLowerCase();
-  const matches = state.nodes.filter(n => !q || `${n.title} ${n.kicker} ${n.content.replace(/<[^>]*>/g,' ')}`.toLowerCase().includes(q)).slice(0, 8);
-  els.results.innerHTML = `<p class="result-label">${q ? `${matches.length} results` : 'On this canvas'}</p>`;
-  matches.forEach(node => {
-    const button = document.createElement('button');
-    button.className = 'search-result';
-    button.innerHTML = `<span class="result-swatch ${node.color || ''}"></span><span><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(node.kicker || node.type)}</small></span>`;
-    button.addEventListener('click', () => { focusNode(node.id); closePalette(); });
-    els.results.appendChild(button);
-  });
-}
-
-function focusNode(id) {
-  const node = state.nodes.find(n => n.id === id); if (!node) return;
-  view.scale = Math.max(view.scale, .78);
-  view.x = els.viewport.clientWidth/2 - (node.x + (node.width||310)/2)*view.scale;
-  view.y = els.viewport.clientHeight/2 - (node.y + 150)*view.scale;
-  applyView(); selectNode(id);
-}
-
-function openPalette() { els.palette.hidden = false; renderSearchResults(); requestAnimationFrame(() => els.searchInput.focus()); }
-function closePalette() { els.palette.hidden = true; els.searchInput.value = ''; }
-function showToast(message) { clearTimeout(toastTimer); els.toast.textContent = message; els.toast.classList.add('show'); toastTimer = setTimeout(() => els.toast.classList.remove('show'), 1800); }
-
-document.querySelector('#zoomIn').addEventListener('click', () => zoomBy(.1));
-document.querySelector('#zoomOut').addEventListener('click', () => zoomBy(-.1));
-document.querySelector('#fitCanvas').addEventListener('click', fitCanvas);
-document.querySelector('#addNote').addEventListener('click', () => addNode('note'));
-document.querySelector('#addSource').addEventListener('click', () => addNode('source'));
-document.querySelector('#addConnection').addEventListener('click', beginConnectMode);
-document.querySelector('#searchButton').addEventListener('click', openPalette);
-els.searchInput.addEventListener('input', e => renderSearchResults(e.target.value));
-els.palette.addEventListener('pointerdown', e => { if (e.target === els.palette) closePalette(); });
-document.querySelector('#agentButton').addEventListener('click', () => els.agentPanel.hidden = !els.agentPanel.hidden);
-document.querySelector('#closeAgentPanel').addEventListener('click', () => els.agentPanel.hidden = true);
-document.querySelector('#askAgent').addEventListener('click', () => { els.agentPanel.hidden = false; showToast('Agents can edit through the Atlas canvas API'); });
-document.querySelector('#connectAgent').addEventListener('click', () => { document.querySelector('#agentBundle').value = agentBundle(); document.querySelector('#agentSetupModal').hidden = false; els.agentPanel.hidden = true; });
-document.querySelector('#closeAgentSetup').addEventListener('click', () => document.querySelector('#agentSetupModal').hidden = true);
-document.querySelector('#agentSetupModal').addEventListener('pointerdown', event => { if (event.target.id === 'agentSetupModal') event.currentTarget.hidden = true; });
-document.querySelector('#copyAgentBundle').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(agentBundle()); showToast('Private agent bundle copied'); document.querySelector('#copyAgentBundle').innerHTML='<svg><use href="#i-check"/></svg>Connection bundle copied'; }
-  catch (_) { document.querySelector('#agentBundle').select(); showToast('Select and copy the connection bundle'); }
-});
-document.querySelector('#themeButton').addEventListener('click', () => { document.body.classList.toggle('dark'); localStorage.setItem('atlas-theme',document.body.classList.contains('dark')?'dark':'light'); });
-document.querySelector('.sidebar-toggle').addEventListener('click', () => els.sidebar.classList.remove('open'));
-document.querySelector('.mobile-sidebar').addEventListener('click', () => els.sidebar.classList.add('open'));
-document.querySelector('#newCanvasButton').addEventListener('click', () => { document.querySelector('#newCanvasModal').hidden = false; setTimeout(() => document.querySelector('#newCanvasName').focus(),0); });
-els.title.addEventListener('blur', saveState);
-document.querySelector('#undoButton').addEventListener('click', undo);
-document.querySelector('#redoButton').addEventListener('click', redo);
-document.querySelector('#duplicateNode').addEventListener('click', duplicateSelectedNode);
-document.querySelector('#focusNode').addEventListener('click', () => selectedNode && focusNode(selectedNode));
-document.querySelector('#deleteNode').addEventListener('click', deleteSelectedNode);
-els.nodeActions.querySelectorAll('[data-color]').forEach(button => button.addEventListener('click', () => {
-  const node = state.nodes.find(item => item.id === selectedNode); if (!node) return; captureHistory(); node.color = button.dataset.color; saveState(); renderNodes(); selectNode(node.id);
-}));
-document.querySelector('#canvasMenuButton').addEventListener('click', e => { e.stopPropagation(); els.canvasMenu.hidden = !els.canvasMenu.hidden; });
-document.querySelector('#autoLayout').addEventListener('click', autoLayout);
-document.querySelector('#exportCanvas').addEventListener('click', exportCanvas);
-document.querySelector('#importCanvas').addEventListener('click', () => document.querySelector('#importFile').click());
-document.querySelector('#importFile').addEventListener('change', e => { if (e.target.files[0]) importCanvasFile(e.target.files[0]); e.target.value=''; });
-document.querySelector('#duplicateCanvas').addEventListener('click', duplicateCanvas);
-document.querySelector('#cancelNewCanvas').addEventListener('click', () => document.querySelector('#newCanvasModal').hidden = true);
-document.querySelector('#newCanvasModal').addEventListener('pointerdown', e => { if (e.target.id === 'newCanvasModal') e.currentTarget.hidden = true; });
-document.querySelectorAll('.template-option').forEach(button => button.addEventListener('click', () => { activeTemplate = button.dataset.template; document.querySelectorAll('.template-option').forEach(option => option.classList.toggle('selected',option===button)); }));
-document.querySelector('#newCanvasForm').addEventListener('submit', e => { e.preventDefault(); const title=document.querySelector('#newCanvasName').value.trim(); if(!title)return; createCanvas(title,activeTemplate); e.currentTarget.reset(); document.querySelector('#newCanvasModal').hidden=true; });
-document.querySelector('.review-button').addEventListener('click', e => { e.currentTarget.innerHTML='<svg><use href="#i-check"/></svg> All changes reviewed'; document.querySelector('#agentButton b').textContent='0'; showToast('Agent contributions accepted'); });
-document.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey && !e.target.closest('[contenteditable="true"], input')) { e.preventDefault(); undo(); }
-  if (((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'z') || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y')) { e.preventDefault(); redo(); }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd' && selectedNode) { e.preventDefault(); duplicateSelectedNode(); }
-  if (e.shiftKey && e.key.toLowerCase() === 'a' && !e.target.closest('[contenteditable="true"], input')) { e.preventDefault(); autoLayout(); }
-  if (e.key === 'Escape') { closePalette(); els.agentPanel.hidden = true; closeCanvasMenu(); document.querySelector('#newCanvasModal').hidden=true; document.querySelector('#agentSetupModal').hidden=true; selectNode(null); endConnectMode(); }
-  if ((e.key === 'Backspace' || e.key === 'Delete') && selectedNode && !e.target.closest('[contenteditable="true"], input')) {
-    deleteSelectedNode();
-  }
-});
-
-// Stable API for Codex, MCP bridges, browser extensions, and other agents.
-window.AtlasCanvas = Object.freeze({
-  version: '2.0',
-  getSnapshot: () => structuredClone(state),
-  createNode: input => addNode(input.type || 'note', { ...input, agent: true, kicker: input.kicker || 'Agent contribution' }),
-  listCanvases: () => workspace.canvases.map(canvas => ({id:canvas.id,title:canvas.state.title,updatedAt:canvas.updatedAt})),
-  openCanvas: id => switchCanvas(id),
-  createCanvas: (title,template='blank') => createCanvas(title,template),
-  updateNode: (id, patch) => { const node = state.nodes.find(n => n.id === id); if (!node) throw new Error(`Unknown node: ${id}`); captureHistory(); Object.assign(node, patch, { agent: true }); saveState(); renderNodes(); return structuredClone(node); },
-  connect: (from, to, relationship = 'related to') => { if (!state.nodes.some(n => n.id === from) || !state.nodes.some(n => n.id === to)) throw new Error('Both nodes must exist'); captureHistory(); const edge = { id: `edge-${Date.now()}`, from, to, relationship, agent: true }; state.edges.push(edge); saveState(); renderEdges(); return structuredClone(edge); },
-  updateEdge: (selector, patch) => { const edge = state.edges.find(item => typeof selector === 'string' ? item.id === selector : item.from === selector.from && item.to === selector.to); if (!edge) throw new Error('Unknown edge'); captureHistory(); Object.assign(edge, patch, { agent:true }); saveState(); renderEdges(); return structuredClone(edge); },
-  transact: operations => { captureHistory(); operations.forEach(op => { if(op.type==='create_node') state.nodes.push({...op.node,id:op.node.id||`agent-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,agent:true}); if(op.type==='connect') state.edges.push({id:`edge-${Date.now()}-${Math.random()}`,from:op.from,to:op.to,relationship:op.relationship||'related to',agent:true}); if(op.type==='update_node'){const n=state.nodes.find(item=>item.id===(op.id||op.nodeId));if(n)Object.assign(n,op.patch,{agent:true});} if(op.type==='update_edge'){const edge=state.edges.find(item=>op.edgeId?item.id===op.edgeId:item.from===op.from&&item.to===op.to);if(edge)Object.assign(edge,op.patch,{agent:true});} }); saveState(); renderNodes(); return structuredClone(state); },
-  focus: focusNode,
-  exportJSON: () => JSON.stringify(state, null, 2)
-});
-
-if (localStorage.getItem('atlas-theme') === 'dark') document.body.classList.add('dark');
-els.title.textContent = state.title;
-renderCanvasList();
-renderNodes();
-applyView();
-updateHistoryButtons();
-setTimeout(() => { if (window.innerWidth < 1200) fitCanvas(); }, 80);
-initializeCloud();
-setInterval(pollCloud, 15000);
+if(localStorage.getItem('atlas-theme')==='dark')document.body.classList.add('dark');
+renderAll();setTimeout(()=>{if(window.innerWidth<1200)fitCanvas();},80);initializeCloud();setInterval(pollCloud,15000);
+if(!localStorage.getItem(ONBOARDING_KEY)&&!hadSavedWorkspace){document.querySelector('#welcomeModal').hidden=false;requestAnimationFrame(()=>document.querySelector('#welcomeInput').focus());}

@@ -52,10 +52,8 @@
         </nav>
 
         <section class="nav-section">
-          <div class="section-title"><span>Spaces</span><button aria-label="Add space"><svg><use href="#i-plus"/></svg></button></div>
-          <button class="space-row"><span class="space-icon lavender"><svg><use href="#i-folder"/></svg></span><span>Learning lab</span><span class="count">8</span></button>
-          <button class="space-row"><span class="space-icon peach"><svg><use href="#i-folder"/></svg></span><span>Ideas & essays</span><span class="count">4</span></button>
-          <button class="space-row"><span class="space-icon mint"><svg><use href="#i-folder"/></svg></span><span>Product research</span><span class="count">6</span></button>
+          <div class="section-title"><span>Spaces</span><button id="addSpaceButton" aria-label="Add space"><svg><use href="#i-plus"/></svg></button></div>
+          <div id="spaceList"></div>
         </section>
 
         <section class="nav-section recents-section">
@@ -73,7 +71,7 @@
           <div class="title-block">
             <button class="mobile-sidebar icon-button" aria-label="Open sidebar"><svg><use href="#i-sidebar"/></svg></button>
             <div>
-              <div class="breadcrumbs"><span>Learning lab</span><span>/</span></div>
+              <div class="breadcrumbs"><span id="spaceBreadcrumb">Learning lab</span><span>/</span></div>
               <h1 id="canvasTitle" contenteditable="true" spellcheck="false">Neural networks</h1>
             </div>
           </div>
@@ -83,8 +81,7 @@
               <button class="icon-button" id="undoButton" aria-label="Undo" disabled><svg><use href="#i-undo"/></svg></button>
               <button class="icon-button" id="redoButton" aria-label="Redo" disabled><svg><use href="#i-redo"/></svg></button>
             </div>
-            <button class="agent-button" id="agentButton"><svg><use href="#i-spark"/></svg><span>Agent activity</span><b>3</b></button>
-            <div class="collaborators" aria-label="Collaborators"><span class="avatar avatar-agent">C</span><span class="avatar">L</span></div>
+            <button class="agent-button" id="agentButton"><svg><use href="#i-spark"/></svg><span>Activity</span><b id="activityCount">0</b></button>
             <button class="icon-button" id="themeButton" aria-label="Toggle theme"><svg><use href="#i-moon"/></svg></button>
             <button class="icon-button" id="canvasMenuButton" aria-label="Canvas menu"><svg><use href="#i-more"/></svg></button>
           </div>
@@ -104,6 +101,7 @@
             <button id="fitCanvas" aria-label="Fit canvas"><svg><use href="#i-fit"/></svg></button>
           </div>
           <div class="privacy-pill"><svg><use href="#i-lock"/></svg><span>Private canvas</span></div>
+          <button class="minimap" id="minimap" aria-label="Fit canvas overview"><span id="minimapNodes"></span><i>Overview</i></button>
 
           <div class="node-actions" id="nodeActions" hidden>
             <span class="selection-label">1 selected</span>
@@ -122,20 +120,26 @@
           </div>
 
           <div class="create-toolbar" aria-label="Create canvas item">
-            <button id="addNote"><span class="tool-icon"><svg><use href="#i-plus"/></svg></span><span>Add note</span></button>
+            <button id="addAnything"><span class="tool-icon"><svg><use href="#i-plus"/></svg></span><span>Add anything</span></button>
             <div class="tool-divider"></div>
-            <button id="addSource" aria-label="Add source"><svg><use href="#i-file"/></svg></button>
             <button id="addConnection" aria-label="Connect nodes"><svg><use href="#i-link"/></svg></button>
-            <button id="askAgent"><svg><use href="#i-spark"/></svg><span>Ask an agent</span></button>
+            <button id="askAgent"><svg><use href="#i-spark"/></svg><span>Ask Atlas</span></button>
           </div>
 
           <div class="agent-panel" id="agentPanel" hidden>
-            <div class="agent-panel-head"><div><span class="agent-symbol"><svg><use href="#i-spark"/></svg></span><span><strong>Agent activity</strong><small>Changes are always traceable</small></span></div><button id="closeAgentPanel">×</button></div>
-            <div class="agent-item"><span class="activity-icon purple"><svg><use href="#i-check"/></svg></span><div><strong>Connected two related ideas</strong><p>“Gradient descent” → “Backpropagation”</p><small>Codex · 2 min ago</small></div></div>
-            <div class="agent-item"><span class="activity-icon green"><svg><use href="#i-plus"/></svg></span><div><strong>Added a research question</strong><p>How do transformers learn representations?</p><small>Codex · 4 min ago</small></div></div>
-            <div class="agent-item"><span class="activity-icon amber"><svg><use href="#i-file"/></svg></span><div><strong>Summarized a source</strong><p>Deep Learning, LeCun et al. (2015)</p><small>Codex · 8 min ago</small></div></div>
-            <button class="connect-agent-button" id="connectAgent"><span class="agent-symbol"><svg><use href="#i-link"/></svg></span><span><strong>Connect an agent</strong><small>API, credentials, and portable skill</small></span><svg><use href="#i-chevron"/></svg></button>
-            <button class="review-button">Review all changes <span>3</span></button>
+            <div class="agent-panel-head"><div><span class="agent-symbol"><svg><use href="#i-spark"/></svg></span><span><strong>Ask Atlas</strong><small id="agentScopeLabel">Working with this canvas</small></span></div><button id="closeAgentPanel" aria-label="Close Ask Atlas">×</button></div>
+            <div class="quick-prompts" aria-label="Suggested prompts">
+              <button data-agent-prompt="What important question is missing?">Find a missing question</button>
+              <button data-agent-prompt="Challenge the weakest assumption on this canvas.">Challenge an assumption</button>
+              <button data-agent-prompt="Suggest useful connections between these ideas.">Suggest connections</button>
+            </div>
+            <form class="agent-composer" id="agentForm">
+              <label for="agentInput">What should Atlas help you think through?</label>
+              <textarea id="agentInput" rows="4" placeholder="Ask about the canvas, selected card, or paste a thought…" required></textarea>
+              <div class="composer-actions"><select id="agentScope" aria-label="Agent scope"><option value="canvas">Entire canvas</option><option value="selection">Selected card</option></select><button type="submit" id="sendAgentPrompt"><svg><use href="#i-spark"/></svg>Propose changes</button></div>
+            </form>
+            <div class="proposal-list" id="proposalList" hidden></div>
+            <div class="activity-section"><div class="activity-title"><span>Recent activity</span><button id="openIntegrations">Agent integrations</button></div><div id="activityList" class="activity-list"></div></div>
           </div>
 
           <div class="canvas-menu" id="canvasMenu" hidden>
@@ -144,6 +148,7 @@
             <button id="importCanvas"><svg><use href="#i-upload"/></svg><span><strong>Import canvas</strong><small>Open an Atlas JSON file</small></span></button>
             <div class="menu-divider"></div>
             <button id="duplicateCanvas"><svg><use href="#i-copy"/></svg><span><strong>Duplicate canvas</strong><small>Create an editable copy</small></span></button>
+            <button id="openIntegrationsMenu"><svg><use href="#i-spark"/></svg><span><strong>Agent integrations</strong><small>MCP, API, and connection bundle</small></span></button>
           </div>
         </div>
       </section>
@@ -156,16 +161,39 @@
       </div>
     </div>
     <div class="toast" id="toast" role="status"></div>
+    <div class="modal-backdrop" id="welcomeModal" hidden>
+      <section class="welcome-dialog" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+        <span class="modal-icon"><svg><use href="#i-spark"/></svg></span>
+        <p class="eyebrow">A shared thinking space</p>
+        <h2 id="welcomeTitle">What are you exploring?</h2>
+        <p>Start with a question, idea, or source. Atlas will help shape it into an editable map—you approve every proposed change.</p>
+        <form id="welcomeForm"><textarea id="welcomeInput" rows="4" placeholder="e.g. How should small teams use AI without losing judgment?" required></textarea><div class="intent-row" aria-label="Choose an intention"><button type="button" class="intent-chip selected" data-intent="understand">Understand</button><button type="button" class="intent-chip" data-intent="compare">Compare</button><button type="button" class="intent-chip" data-intent="develop">Develop an idea</button><button type="button" class="intent-chip" data-intent="decide">Decide</button><button type="button" class="intent-chip" data-intent="plan">Make a plan</button></div><div class="welcome-actions"><button type="button" id="exploreDemo">Explore the demo</button><button type="submit">Create my first map</button></div></form>
+      </section>
+    </div>
+    <div class="modal-backdrop" id="captureModal" hidden>
+      <form class="capture-dialog" id="captureForm">
+        <div class="setup-head"><span class="modal-icon"><svg><use href="#i-plus"/></svg></span><button type="button" id="closeCapture" aria-label="Close capture">×</button></div>
+        <p class="eyebrow">Universal capture</p><h2>Add anything</h2><p>Paste a thought or URL. Atlas will choose the right card type; you can change it before adding.</p>
+        <label>Content<textarea id="captureInput" rows="6" placeholder="Paste a thought, question, or https://…" required></textarea></label>
+        <div class="capture-options"><label>Card type<select id="captureType"><option value="auto">Detect automatically</option><option value="note">Note</option><option value="question">Question</option><option value="source">Source</option><option value="insight">Insight</option></select></label><label>Title<input id="captureTitle" placeholder="Optional—Atlas can infer this" maxlength="100" /></label></div>
+        <div class="modal-actions"><button type="button" id="cancelCapture">Cancel</button><button type="submit">Add to canvas</button></div>
+      </form>
+    </div>
+    <aside class="card-editor" id="cardEditor" hidden aria-label="Edit card">
+      <div class="editor-head"><div><span class="eyebrow">Card editor</span><strong id="editorHeading">Edit card</strong></div><button id="closeCardEditor" aria-label="Close card editor">×</button></div>
+      <form id="cardEditorForm"><label>Type<select id="editorType"><option value="note">Note</option><option value="concept">Concept</option><option value="question">Question</option><option value="source">Source</option><option value="insight">Insight</option><option value="overview">Overview</option></select></label><label>Label<input id="editorKicker" maxlength="60" /></label><label>Title<textarea id="editorTitle" rows="2" maxlength="160" required></textarea></label><label>Body<div id="editorBody" class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true"></div></label><label id="editorUrlRow">Source URL<input id="editorUrl" type="url" placeholder="https://…" /></label><div class="editor-meta" id="editorMeta"></div><div class="editor-actions"><button type="button" id="cancelCardEdit">Cancel</button><button type="submit">Save card</button></div></form>
+    </aside>
     <div class="modal-backdrop" id="newCanvasModal" hidden>
       <form class="new-canvas-dialog" id="newCanvasForm">
         <span class="modal-icon"><svg><use href="#i-canvas"/></svg></span>
         <h2>Create a new canvas</h2>
-        <p>Start from a clean space. You can bring in sources, notes, and agent contributions at any time.</p>
-        <label>Canvas name<input id="newCanvasName" maxlength="60" placeholder="What are you exploring?" required /></label>
+        <p>Begin with an intention. Atlas creates a useful structure that stays completely editable.</p>
+        <label>What are you exploring?<input id="newCanvasName" maxlength="100" placeholder="A question, project, or idea" required /></label>
+        <div class="intent-row compact" aria-label="Choose an intention"><button type="button" class="intent-chip selected" data-new-intent="understand">Understand</button><button type="button" class="intent-chip" data-new-intent="compare">Compare</button><button type="button" class="intent-chip" data-new-intent="develop">Develop</button><button type="button" class="intent-chip" data-new-intent="decide">Decide</button><button type="button" class="intent-chip" data-new-intent="plan">Plan</button></div>
         <div class="template-row">
-          <button type="button" class="template-option selected" data-template="blank"><span></span><strong>Blank</strong><small>Open space</small></button>
-          <button type="button" class="template-option" data-template="research"><span></span><strong>Research</strong><small>Guided prompts</small></button>
-          <button type="button" class="template-option" data-template="literature"><span></span><strong>Literature</strong><small>Sources first</small></button>
+          <button type="button" class="template-option selected" data-template="guided"><span></span><strong>Guided</strong><small>Question + first steps</small></button>
+          <button type="button" class="template-option" data-template="blank"><span></span><strong>Blank</strong><small>One starting card</small></button>
+          <button type="button" class="template-option" data-template="literature"><span></span><strong>Sources</strong><small>Evidence first</small></button>
         </div>
         <div class="modal-actions"><button type="button" id="cancelNewCanvas">Cancel</button><button type="submit">Create canvas</button></div>
       </form>
