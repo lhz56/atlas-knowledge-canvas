@@ -21,6 +21,16 @@ const hashToken = async (token: string) => {
 
 const sanitizeWorkspaceId = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 100);
 
+const operationSummary = (operation:any) => {
+  if (operation.type === "create_canvas") return `Created canvas “${operation.canvas?.title || "Agent research"}”`;
+  if (operation.type === "create_node") return `Added “${operation.node?.title || "Untitled insight"}”`;
+  if (operation.type === "update_node") return `Updated card ${operation.nodeId || ""}`.trim();
+  if (operation.type === "connect") return `Connected two ideas as “${operation.relationship || "related to"}”`;
+  if (operation.type === "update_edge") return "Updated a connection";
+  if (operation.type === "delete_node") return `Deleted card ${operation.nodeId || ""}`.trim();
+  return "Updated the canvas";
+};
+
 const applyOperation = (workspace: any, operation: any, actor: string) => {
   const canvas = workspace.canvases?.find((item: any) => item.id === (operation.canvasId || workspace.activeId));
   if (!canvas && operation.type !== "create_canvas") throw new Error(`Unknown canvas: ${operation.canvasId || workspace.activeId}`);
@@ -75,7 +85,7 @@ export default async (request: Request, context: Context) => {
   const dataKey = `workspace/${workspaceId}`;
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
   const tokenHash = token ? await hashToken(token) : "";
-  const storedHash = await store.get(authKey);
+  const storedHash = await store.get(authKey, { type:"text" });
 
   if (!storedHash && request.method === "POST") {
     const body = await request.json().catch(() => null) as any;
@@ -95,6 +105,7 @@ export default async (request: Request, context: Context) => {
   if (request.method === "PUT") {
     const body = await request.json().catch(() => null) as any;
     if (!body?.workspace?.canvases) return json({ error:"invalid_workspace" }, 400);
+    if (Number.isFinite(body.baseRevision) && body.baseRevision !== (workspace.cloudRevision || 0)) return json({ error:"revision_conflict", cloudRevision:workspace.cloudRevision, workspace }, 409);
     const next = { ...body.workspace, cloudRevision:(workspace.cloudRevision || 0)+1, audit:(workspace.audit || []).slice(-199) };
     next.audit.push({ id:crypto.randomUUID(), actor:request.headers.get("x-atlas-agent") || "Atlas web", action:"workspace_synced", at:new Date().toISOString() });
     await store.setJSON(dataKey, next);
@@ -109,6 +120,15 @@ export default async (request: Request, context: Context) => {
     try { operations.forEach((operation:any) => applyOperation(workspace, operation, actor)); }
     catch (error) { return json({ error:error instanceof Error ? error.message : "invalid_operation" }, 400); }
     workspace.cloudRevision = (workspace.cloudRevision || 0) + 1;
+    const activityAt = new Date().toISOString();
+    const affectedCanvasIds = new Set(operations.filter((operation:any) => operation.type !== "create_canvas").map((operation:any) => operation.canvasId || workspace.activeId));
+    affectedCanvasIds.forEach((canvasId:any) => {
+      const canvas = workspace.canvases.find((item:any) => item.id === canvasId);
+      if (!canvas) return;
+      canvas.state.activity = Array.isArray(canvas.state.activity) ? canvas.state.activity : [];
+      canvas.state.activity.unshift({ id:crypto.randomUUID(), actor, at:activityAt, action:"agent_transaction", summaries:operations.filter((operation:any) => (operation.canvasId || workspace.activeId) === canvasId).map(operationSummary), operations:operations.length });
+      canvas.state.activity = canvas.state.activity.slice(0,100);
+    });
     workspace.audit = (workspace.audit || []).slice(-199);
     workspace.audit.push({ id:crypto.randomUUID(), actor, action:"agent_transaction", operations:operations.length, at:new Date().toISOString() });
     await store.setJSON(dataKey, workspace);
