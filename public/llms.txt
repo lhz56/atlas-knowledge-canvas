@@ -1,0 +1,11 @@
+# Atlas Canvas
+
+Atlas is a persistent visual knowledge workspace shared by people and agents.
+
+Agent discovery: /.well-known/atlas-agent.json
+OpenAPI schema: /openapi.json
+MCP Streamable HTTP: /mcp/{workspaceId}
+Portable skill: /agent/atlas-canvas.skill
+Readable skill instructions: /agent/atlas-canvas/SKILL.md
+
+Agents require a private connection bundle copied by the workspace owner from Ask an agent → Connect an agent. Never infer, scrape, or request credentials from page source. Never place credentials in canvas content.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Atlas Canvas"
+  short_description: "Build and maintain visual research canvases"
+  default_prompt: "Use $atlas-canvas to add this research to my Atlas workspace with sources and provenance."

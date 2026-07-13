@@ -1,0 +1,12 @@
+[
+  {
+    "type": "create_node",
+    "canvasId": "test",
+    "node": {
+      "id": "skill-client-node",
+      "type": "question",
+      "title": "Can every agent write safely?",
+      "content": "<p>This node was created by the validated Atlas skill client.</p>"
+    }
+  }
+]

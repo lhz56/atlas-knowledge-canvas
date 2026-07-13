@@ -1,0 +1,12 @@
+# Local Netlify folder
+.netlify
+
+# Dependencies and generated output
+node_modules/
+dist/
+.DS_Store
+
+# Local visual QA captures
+atlas-preview.png
+learning-that-lasts-*.png
+!learning-that-lasts-world-class-desktop.png

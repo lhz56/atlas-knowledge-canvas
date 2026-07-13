@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f3f0" />
+    <meta name="description" content="Atlas — a visual knowledge canvas for people and agents." />
+    <title>Atlas — Knowledge Canvas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+      <symbol id="i-canvas" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m8 15 2-2 2 2 4-5 2 3"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 15.5A8.5 8.5 0 0 1 8.5 3.5a8.5 8.5 0 1 0 12 12Z"/></symbol>
+      <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+      <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h6M9 16h6"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4zM19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7z"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></symbol>
+      <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="m9 7-5 5 5 5"/><path d="M20 17a7 7 0 0 0-7-7H4"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M4 17a7 7 0 0 1 7-7h9"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 20h16"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0 5 5m-5-5L7 9M4 20h16"/></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7M10 11v6M14 11v6"/></symbol>
+      <symbol id="i-focus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"/></symbol>
+    </svg>
+
+    <main class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark"><span></span><span></span></div>
+          <span class="brand-name">atlas</span>
+          <button class="icon-button sidebar-toggle" aria-label="Collapse sidebar"><svg><use href="#i-sidebar"/></svg></button>
+        </div>
+
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <button class="nav-button" id="searchButton"><svg><use href="#i-search"/></svg><span>Search</span><kbd>⌘ K</kbd></button>
+          <button class="nav-button" id="newCanvasButton"><svg><use href="#i-canvas"/></svg><span>New canvas</span></button>
+        </nav>
+
+        <section class="nav-section">
+          <div class="section-title"><span>Spaces</span><button aria-label="Add space"><svg><use href="#i-plus"/></svg></button></div>
+          <button class="space-row"><span class="space-icon lavender"><svg><use href="#i-folder"/></svg></span><span>Learning lab</span><span class="count">8</span></button>
+          <button class="space-row"><span class="space-icon peach"><svg><use href="#i-folder"/></svg></span><span>Ideas & essays</span><span class="count">4</span></button>
+          <button class="space-row"><span class="space-icon mint"><svg><use href="#i-folder"/></svg></span><span>Product research</span><span class="count">6</span></button>
+        </section>
+
+        <section class="nav-section recents-section">
+          <div class="section-title"><span>Recent canvases</span></div>
+          <div id="canvasList"></div>
+        </section>
+
+        <div class="sidebar-footer">
+          <button class="profile-button"><span class="avatar">L</span><span><strong>Lin's workspace</strong><small>All changes saved</small></span><svg><use href="#i-chevron"/></svg></button>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div class="title-block">
+            <button class="mobile-sidebar icon-button" aria-label="Open sidebar"><svg><use href="#i-sidebar"/></svg></button>
+            <div>
+              <div class="breadcrumbs"><span>Learning lab</span><span>/</span></div>
+              <h1 id="canvasTitle" contenteditable="true" spellcheck="false">Neural networks</h1>
+            </div>
+          </div>
+          <div class="top-actions">
+            <span class="save-state"><span></span>Saved</span>
+            <div class="history-controls" aria-label="Canvas history">
+              <button class="icon-button" id="undoButton" aria-label="Undo" disabled><svg><use href="#i-undo"/></svg></button>
+              <button class="icon-button" id="redoButton" aria-label="Redo" disabled><svg><use href="#i-redo"/></svg></button>
+            </div>
+            <button class="agent-button" id="agentButton"><svg><use href="#i-spark"/></svg><span>Agent activity</span><b>3</b></button>
+            <div class="collaborators" aria-label="Collaborators"><span class="avatar avatar-agent">C</span><span class="avatar">L</span></div>
+            <button class="icon-button" id="themeButton" aria-label="Toggle theme"><svg><use href="#i-moon"/></svg></button>
+            <button class="icon-button" id="canvasMenuButton" aria-label="Canvas menu"><svg><use href="#i-more"/></svg></button>
+          </div>
+        </header>
+
+        <div class="canvas-viewport" id="canvasViewport">
+          <div class="world" id="world">
+            <svg class="edges" id="edges" aria-hidden="true"></svg>
+            <div id="nodes"></div>
+          </div>
+
+          <div class="canvas-hint"><svg><use href="#i-command"/></svg><span>Hold <kbd>Space</kbd> to move around</span></div>
+          <div class="zoom-controls">
+            <button id="zoomIn" aria-label="Zoom in">+</button>
+            <span id="zoomLabel">78%</span>
+            <button id="zoomOut" aria-label="Zoom out">−</button>
+            <button id="fitCanvas" aria-label="Fit canvas"><svg><use href="#i-fit"/></svg></button>
+          </div>
+          <div class="privacy-pill"><svg><use href="#i-lock"/></svg><span>Private canvas</span></div>
+
+          <div class="node-actions" id="nodeActions" hidden>
+            <span class="selection-label">1 selected</span>
+            <span class="color-options" aria-label="Card color">
+              <button data-color="" class="color-dot paper" aria-label="Paper"></button>
+              <button data-color="purple" class="color-dot purple" aria-label="Lavender"></button>
+              <button data-color="blue" class="color-dot blue" aria-label="Blue"></button>
+              <button data-color="green" class="color-dot green" aria-label="Green"></button>
+              <button data-color="amber" class="color-dot amber" aria-label="Amber"></button>
+              <button data-color="rose" class="color-dot rose" aria-label="Rose"></button>
+            </span>
+            <span class="tool-divider"></span>
+            <button id="duplicateNode" aria-label="Duplicate card"><svg><use href="#i-copy"/></svg></button>
+            <button id="focusNode" aria-label="Focus card"><svg><use href="#i-focus"/></svg></button>
+            <button id="deleteNode" class="danger" aria-label="Delete card"><svg><use href="#i-trash"/></svg></button>
+          </div>
+
+          <div class="create-toolbar" aria-label="Create canvas item">
+            <button id="addNote"><span class="tool-icon"><svg><use href="#i-plus"/></svg></span><span>Add note</span></button>
+            <div class="tool-divider"></div>
+            <button id="addSource" aria-label="Add source"><svg><use href="#i-file"/></svg></button>
+            <button id="addConnection" aria-label="Connect nodes"><svg><use href="#i-link"/></svg></button>
+            <button id="askAgent"><svg><use href="#i-spark"/></svg><span>Ask an agent</span></button>
+          </div>
+
+          <div class="agent-panel" id="agentPanel" hidden>
+            <div class="agent-panel-head"><div><span class="agent-symbol"><svg><use href="#i-spark"/></svg></span><span><strong>Agent activity</strong><small>Changes are always traceable</small></span></div><button id="closeAgentPanel">×</button></div>
+            <div class="agent-item"><span class="activity-icon purple"><svg><use href="#i-check"/></svg></span><div><strong>Connected two related ideas</strong><p>“Gradient descent” → “Backpropagation”</p><small>Codex · 2 min ago</small></div></div>
+            <div class="agent-item"><span class="activity-icon green"><svg><use href="#i-plus"/></svg></span><div><strong>Added a research question</strong><p>How do transformers learn representations?</p><small>Codex · 4 min ago</small></div></div>
+            <div class="agent-item"><span class="activity-icon amber"><svg><use href="#i-file"/></svg></span><div><strong>Summarized a source</strong><p>Deep Learning, LeCun et al. (2015)</p><small>Codex · 8 min ago</small></div></div>
+            <button class="connect-agent-button" id="connectAgent"><span class="agent-symbol"><svg><use href="#i-link"/></svg></span><span><strong>Connect an agent</strong><small>API, credentials, and portable skill</small></span><svg><use href="#i-chevron"/></svg></button>
+            <button class="review-button">Review all changes <span>3</span></button>
+          </div>
+
+          <div class="canvas-menu" id="canvasMenu" hidden>
+            <button id="autoLayout"><svg><use href="#i-layout"/></svg><span><strong>Auto-arrange</strong><small>Organize the current map</small></span><kbd>⇧ A</kbd></button>
+            <button id="exportCanvas"><svg><use href="#i-download"/></svg><span><strong>Export canvas</strong><small>Portable Atlas JSON</small></span></button>
+            <button id="importCanvas"><svg><use href="#i-upload"/></svg><span><strong>Import canvas</strong><small>Open an Atlas JSON file</small></span></button>
+            <div class="menu-divider"></div>
+            <button id="duplicateCanvas"><svg><use href="#i-copy"/></svg><span><strong>Duplicate canvas</strong><small>Create an editable copy</small></span></button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="command-palette" id="commandPalette" hidden>
+      <div class="command-dialog">
+        <div class="search-field"><svg><use href="#i-search"/></svg><input id="searchInput" placeholder="Search every canvas…" autocomplete="off"/><kbd>esc</kbd></div>
+        <div class="command-results" id="searchResults"><p class="result-label">On this canvas</p></div>
+      </div>
+    </div>
+    <div class="toast" id="toast" role="status"></div>
+    <div class="modal-backdrop" id="newCanvasModal" hidden>
+      <form class="new-canvas-dialog" id="newCanvasForm">
+        <span class="modal-icon"><svg><use href="#i-canvas"/></svg></span>
+        <h2>Create a new canvas</h2>
+        <p>Start from a clean space. You can bring in sources, notes, and agent contributions at any time.</p>
+        <label>Canvas name<input id="newCanvasName" maxlength="60" placeholder="What are you exploring?" required /></label>
+        <div class="template-row">
+          <button type="button" class="template-option selected" data-template="blank"><span></span><strong>Blank</strong><small>Open space</small></button>
+          <button type="button" class="template-option" data-template="research"><span></span><strong>Research</strong><small>Guided prompts</small></button>
+          <button type="button" class="template-option" data-template="literature"><span></span><strong>Literature</strong><small>Sources first</small></button>
+        </div>
+        <div class="modal-actions"><button type="button" id="cancelNewCanvas">Cancel</button><button type="submit">Create canvas</button></div>
+      </form>
+    </div>
+    <div class="modal-backdrop" id="agentSetupModal" hidden>
+      <section class="agent-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="agentSetupTitle">
+        <div class="setup-head"><span class="modal-icon"><svg><use href="#i-spark"/></svg></span><button id="closeAgentSetup" aria-label="Close agent setup">×</button></div>
+        <h2 id="agentSetupTitle">Connect any agent</h2>
+        <p>Give an agent this private connection bundle once. It can inspect and update your cloud workspace through structured, attributed operations.</p>
+        <div class="connection-status"><span></span><div><strong id="cloudStatus">Preparing cloud workspace…</strong><small id="cloudStatusDetail">Your credential stays in this browser until you copy it.</small></div></div>
+        <label class="bundle-label">Private connection bundle<textarea id="agentBundle" readonly spellcheck="false"></textarea></label>
+        <div class="setup-warning"><svg><use href="#i-lock"/></svg><span>This bundle grants write access. Treat it like a password and only give it to agents you trust.</span></div>
+        <div class="setup-actions"><button id="copyAgentBundle"><svg><use href="#i-copy"/></svg>Copy connection bundle</button><a href="/agent/atlas-canvas.skill" download><svg><use href="#i-download"/></svg>Download Atlas skill</a></div>
+        <div class="setup-links"><a href="/.well-known/atlas-agent.json" target="_blank">Agent manifest</a><a href="/openapi.json" target="_blank">OpenAPI</a><a href="/agent/atlas-canvas/SKILL.md" target="_blank">Skill instructions</a></div>
+      </section>
+    </div>
+    <input id="importFile" type="file" accept="application/json,.json" hidden />
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>

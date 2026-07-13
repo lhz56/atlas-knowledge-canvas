@@ -1,0 +1,65 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Atlas Agent API",
+    "version": "1.0.0",
+    "description": "Inspect and transactionally update an Atlas knowledge workspace."
+  },
+  "servers": [{ "url": "https://atlas-knowledge-canvas-lin.netlify.app" }],
+  "paths": {
+    "/api/atlas/{workspaceId}": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "summary": "Read a workspace",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Workspace snapshot", "content": { "application/json": { "schema": { "type": "object" } } } }, "401": { "description": "Unauthorized" } }
+      },
+      "post": {
+        "summary": "Apply an atomic agent transaction",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "oneOf": [{ "$ref": "#/components/schemas/Transaction" }, { "$ref": "#/components/schemas/Bootstrap" }] } } } },
+        "responses": { "200": { "description": "Operations applied" }, "400": { "description": "Invalid operation" }, "401": { "description": "Unauthorized" } }
+      },
+      "put": {
+        "summary": "Synchronize the Atlas web client workspace",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["workspace"], "properties": { "workspace": { "type": "object" } } } } } },
+        "responses": { "200": { "description": "Workspace synchronized" }, "401": { "description": "Unauthorized" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": { "bearerAuth": { "type": "http", "scheme": "bearer" } },
+    "schemas": {
+      "Bootstrap": {
+        "type": "object",
+        "description": "Initialize an unclaimed isolated workspace. Atlas web performs this automatically before issuing a bundle.",
+        "required": ["action", "workspace"],
+        "properties": { "action": { "const": "bootstrap" }, "workspace": { "type": "object" } }
+      },
+      "Transaction": {
+        "type": "object",
+        "required": ["operations"],
+        "properties": {
+          "agent": { "type": "string", "maxLength": 80 },
+          "operations": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/components/schemas/Operation" } }
+        }
+      },
+      "Operation": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "enum": ["create_canvas", "create_node", "update_node", "connect", "delete_node"] },
+          "canvasId": { "type": "string" },
+          "nodeId": { "type": "string" },
+          "node": { "type": "object" },
+          "patch": { "type": "object" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "relationship": { "type": "string" },
+          "canvas": { "type": "object" }
+        }
+      }
+    }
+  }
+}

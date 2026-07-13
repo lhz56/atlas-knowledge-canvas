@@ -1,0 +1,24 @@
+{
+  "name": "Atlas Canvas",
+  "protocol": "atlas-agent-v1",
+  "description": "A persistent visual knowledge workspace for humans and agents.",
+  "authentication": {
+    "type": "bearer",
+    "delivery": "Atlas connection bundle",
+    "warning": "Never place the token in a URL, canvas node, log, or public prompt."
+  },
+  "api": {
+    "openapi": "/openapi.json",
+    "workspacePath": "/api/atlas/{workspaceId}"
+  },
+  "mcp": {
+    "transport": "streamable_http",
+    "path": "/mcp/{workspaceId}",
+    "authentication": "Authorization: Bearer <token>"
+  },
+  "skills": {
+    "codex": "/agent/atlas-canvas.skill",
+    "markdown": "/agent/atlas-canvas/SKILL.md"
+  },
+  "humanSetup": "/#connect-agent"
+}
